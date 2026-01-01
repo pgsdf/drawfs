@@ -1,8 +1,16 @@
-# TEST_PLAN
+# TEST PLAN
 
-Testing goals:
-- Protocol correctness
-- Robustness
-- Determinism
+## Goals
+- Verify protocol compliance
+- Ensure robustness against malformed input
+- Guarantee deterministic behavior
 
-Includes unit, integration, and fuzz testing.
+## Test Types
+- Unit tests (protocol parsing)
+- Integration tests (kernel + user space)
+- Stress and fuzz testing
+
+## Current Focus
+- Step 11 surface mmap correctness
+- Lifetime and cleanup behavior
+- Error propagation

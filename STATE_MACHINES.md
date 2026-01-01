@@ -1,11 +1,26 @@
-# STATE_MACHINES
+# STATE MACHINES
 
-Normative state machines for:
-- Sessions
-- Images
-- Surfaces
-- Presents and fences
-- Displays
-- Event subscriptions
+This document defines the normative state machines for drawfs objects.
 
-These definitions prevent undefined behavior.
+## Session
+States:
+- NEW
+- ACTIVE
+- CLOSED
+
+Transitions occur on HELLO, close, or error.
+
+## Display
+- ENUMERATED
+- OPEN
+- CLOSED
+
+## Surface
+- CREATED
+- MAPPED (optional)
+- DESTROYED
+
+## Invariants
+- Surfaces require an open display
+- mmap is only valid for a selected surface
+- Destroyed objects are immediately invalid
