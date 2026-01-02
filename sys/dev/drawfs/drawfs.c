@@ -878,7 +878,7 @@ case DRAWFSGIOC_STATS: {
     default:
         return (ENOTTY);
     }
-	return (0);
+    return (0);
 }
 
 
@@ -910,8 +910,9 @@ drawfs_session_free(struct drawfs_session *s)
         s->in_len = 0;
         s->in_cap = 0;
     }
-
     mtx_unlock(&s->lock);
+
+    drawfs_free_surfaces(s);
 
     seldrain(&s->sel);
     cv_destroy(&s->cv);
