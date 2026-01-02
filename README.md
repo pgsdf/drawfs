@@ -33,3 +33,31 @@ In progress:
 - KMS-backed display binding
 
 See ROADMAP.md for details.
+
+## Build
+
+Primary supported platform is FreeBSD 15.
+
+Build and install the kernel module into your local FreeBSD src tree:
+
+```sh
+sh ./build.sh
+```
+
+Build, install, and load the module:
+
+```sh
+sh ./build.sh load
+```
+
+See `docs/BUILD.md` for details.
+
+## Documentation
+
+Project documentation lives in `docs/`:
+
+- `docs/PROTOCOL.md` protocol framing and message types
+- `docs/ARCHITECTURE_KMOD.md` kernel module architecture
+- `docs/BUILD.md` build and test workflow
+- `docs/SEMADRAW.md` integration notes for semadraw
+
