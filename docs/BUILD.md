@@ -1,5 +1,3 @@
-Requires Zig 0.15.2
-
 # Build and test (kmod)
 
 This repository includes a small helper script, `build.sh`, that installs the kernel module
@@ -7,7 +5,9 @@ sources into your FreeBSD source tree, builds the module, loads it, and runs a s
 
 ## Prerequisites
 
-- FreeBSD source tree available at `/usr/src` (or set `SRCROOT=/path/to/src`)
+- FreeBSD 15
+- Zig 0.15.2 (optional, for userspace samples)
+
 - `rsync` installed (used by `build.sh install`)
 - Python 3 installed (for tests)
 

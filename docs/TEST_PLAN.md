@@ -24,3 +24,21 @@ sudo python3 tests/step13_present_sequence_test.py
 ```
 
 Validates reply and event ordering and cookie roundtrip.
+
+
+## Step 14: Multi Surface Round Robin Present
+
+Runs `tests/step14_multi_surface_round_robin_test.py` to validate creating multiple surfaces, writing distinct patterns via MAP_SURFACE plus mmap, and presenting in a round robin sequence while verifying reply and SURFACE_PRESENTED event ordering and cookies.
+
+## Step 15: Session Cleanup and Reopen
+
+Run:
+
+```
+sudo python3 tests/step15_session_cleanup_reopen_test.py
+```
+
+Validates that drawfs session state is per file descriptor and that close(2)
+cleans up surfaces and mappings. After closing the fd, a new open must not be
+able to map the old surface ID, and the next created surface ID should restart
+from 1 in the new session.

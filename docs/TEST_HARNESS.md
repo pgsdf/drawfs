@@ -7,6 +7,7 @@ The drawfs test harness validates kernel behavior using black-box tests.
 - Error handling
 - Blocking and poll behavior
 - mmap lifecycle correctness
+- Session lifecycle correctness (close and reopen)
 
 ## Implementation
 - Python protocol tests

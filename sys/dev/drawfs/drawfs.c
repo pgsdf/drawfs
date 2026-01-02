@@ -251,6 +251,7 @@ drawfs_reply_surface_destroy(struct drawfs_session *s, uint32_t msg_id,
         goto build_reply;
     }
 
+    /* Detach from session list under lock */
     sf = NULL;
     mtx_lock(&s->lock);
     TAILQ_FOREACH(sf, &s->surfaces, link) {
@@ -259,11 +260,21 @@ drawfs_reply_surface_destroy(struct drawfs_session *s, uint32_t msg_id,
     }
     if (sf != NULL)
         TAILQ_REMOVE(&s->surfaces, sf, link);
+
+    /* If this surface was selected for mmap, clear selection */
+    if (sf != NULL && s->map_surface_id == sf->id)
+        s->map_surface_id = 0;
     mtx_unlock(&s->lock);
 
     if (sf == NULL) {
         rep.status = ENOENT;
         goto build_reply;
+    }
+
+    /* Release backing VM object, if any */
+    if (sf->vmobj != NULL) {
+        vm_object_deallocate(sf->vmobj);
+        sf->vmobj = NULL;
     }
 
     free(sf, M_DRAWFS);
@@ -309,12 +320,11 @@ build_reply:
 }
 
 /*
- * Step 10A: SURFACE_CREATE
- * This is a semantic object only. No buffer mapping yet.
+ * Step 12: SURFACE_PRESENT
+ * Acknowledge that a surface should be displayed, and emit an async
+ * SURFACE_PRESENTED event (with the cookie echoed back) on success.
  */
 static int
-
-
 drawfs_reply_surface_present(struct drawfs_session *s, uint32_t msg_id,
     const uint8_t *payload, size_t payload_len)
 {
@@ -408,6 +418,12 @@ send_reply_only:
     return (0);
 }
 
+/*
+ * Step 10A: SURFACE_CREATE
+ * Create a semantic surface object and allocate its backing VM object.
+ * The surface can later be selected via DRAWFSGIOC_MAP_SURFACE and
+ * presented to the active display via SURFACE_PRESENT.
+ */
 static int
 drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id,
     const uint8_t *payload, size_t payload_len)
@@ -507,10 +523,25 @@ build_reply:
 static void
 drawfs_free_surfaces(struct drawfs_session *s)
 {
-    struct drawfs_surface *sf, *tmp;
+    struct drawfs_surface *sf;
 
-    TAILQ_FOREACH_SAFE(sf, &s->surfaces, link, tmp) {
+    while ((sf = TAILQ_FIRST(&s->surfaces)) != NULL) {
+        struct vm_object *vmobj;
+
         TAILQ_REMOVE(&s->surfaces, sf, link);
+
+        /* If this surface is the one currently selected for mmap, clear mapping. */
+        mtx_lock(&s->lock);
+        if (s->map_surface_id == sf->id) {
+            s->map_surface_id = 0;
+        }
+        mtx_unlock(&s->lock);
+
+        vmobj = sf->vmobj;
+        sf->vmobj = NULL;
+        if (vmobj != NULL)
+            vm_object_deallocate(vmobj);
+
         free(sf, M_DRAWFS);
     }
 }
@@ -800,7 +831,6 @@ case DRAWFSGIOC_MAP_SURFACE:
         ms->status = ENOENT;
 
     break;
-	return (0);
 
 }
 
