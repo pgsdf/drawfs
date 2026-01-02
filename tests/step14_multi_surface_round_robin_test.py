@@ -18,7 +18,7 @@ RPL_DISPLAY_LIST    = 0x8010
 RPL_DISPLAY_OPEN    = 0x8011
 RPL_SURFACE_CREATE  = 0x8020
 RPL_SURFACE_PRESENT = 0x8022
-EVT_SURFACE_PRESENTED = 0x9022
+EVT_SURFACE_PRESENTED = 0x9002
 
 # Frame and message headers
 fh_fmt = "<IHHII"   # magic, version, header_bytes, frame_bytes, frame_id

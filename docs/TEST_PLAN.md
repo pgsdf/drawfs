@@ -42,3 +42,11 @@ Validates that drawfs session state is per file descriptor and that close(2)
 cleans up surfaces and mappings. After closing the fd, a new open must not be
 able to map the old surface ID, and the next created surface ID should restart
 from 1 in the new session.
+
+## Step 16: Multi session isolation
+
+Goal: verify that two independent sessions, meaning two open file descriptors, can create, map, and present surfaces without interfering with each other.
+
+Test: `tests/step16_multi_session_isolation_test.py`
+
+Expected: both sessions receive a `SURFACE_PRESENTED` event with the matching surface id and cookie for that session.

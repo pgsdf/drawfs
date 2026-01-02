@@ -185,7 +185,7 @@ struct drawfs_surface_present_rep {
  * SURFACE_PRESENT (Step 12)
  */
 enum drawfs_event_type {
-    DRAWFS_EVT_SURFACE_PRESENTED = 0x9022,
+    DRAWFS_EVT_SURFACE_PRESENTED = 0x9002,
 };
 
 struct drawfs_req_surface_present {

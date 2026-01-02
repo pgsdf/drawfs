@@ -15,3 +15,10 @@ The drawfs test harness validates kernel behavior using black-box tests.
 - Deterministic replay
 
 Tests are designed to run without GPU hardware.
+
+### Step 16
+
+Run:
+
+    sudo python3 tests/step16_multi_session_isolation_test.py
+

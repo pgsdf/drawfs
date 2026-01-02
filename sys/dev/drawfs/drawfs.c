@@ -329,7 +329,13 @@ drawfs_reply_surface_present(struct drawfs_session *s, uint32_t msg_id,
     const uint8_t *payload, size_t payload_len)
 {
     struct drawfs_req_surface_present req;
+    struct {
+        uint32_t surface_id;
+        uint64_t cookie;
+    } __packed req12;
     struct drawfs_surface *surf;
+    uint32_t surface_id;
+    uint64_t cookie;
 
     /* Reply buffer */
     struct {
@@ -348,34 +354,50 @@ drawfs_reply_surface_present(struct drawfs_session *s, uint32_t msg_id,
     bzero(&out, sizeof(out));
     bzero(&ev, sizeof(ev));
 
-    if (payload_len < sizeof(req)) {
+    /*
+     * Accept two encodings for SURFACE_PRESENT payload:
+     *   - 16 bytes: { uint32 surface_id, uint32 rsv, uint64 cookie }
+     *   - 12 bytes: { uint32 surface_id, uint64 cookie } (legacy tests)
+     */
+    bzero(&req, sizeof(req));
+    bzero(&req12, sizeof(req12));
+    surface_id = 0;
+    cookie = 0;
+
+    if (payload_len >= sizeof(req)) {
+        bcopy(payload, &req, sizeof(req));
+        surface_id = req.surface_id;
+        cookie = req.cookie;
+    } else if (payload_len >= sizeof(req12)) {
+        bcopy(payload, &req12, sizeof(req12));
+        surface_id = req12.surface_id;
+        cookie = req12.cookie;
+    } else {
         out.pl.status = EINVAL;
         out.pl.surface_id = 0;
         out.pl.cookie = 0;
         goto send_reply_only;
     }
 
-    bcopy(payload, &req, sizeof(req));
-
-    if (s->active_display_handle == 0 || req.surface_id == 0) {
+    if ((s->active_display_id == 0 && s->active_display_handle == 0) || surface_id == 0) {
         out.pl.status = EINVAL;
         out.pl.surface_id = 0;
-        out.pl.cookie = req.cookie;
+        out.pl.cookie = cookie;
         goto send_reply_only;
     }
 
-    surf = drawfs_surface_lookup(s, req.surface_id);
+    surf = drawfs_surface_lookup(s, surface_id);
     if (surf == NULL) {
         out.pl.status = ENOENT;
         out.pl.surface_id = 0;
-        out.pl.cookie = req.cookie;
+        out.pl.cookie = cookie;
         goto send_reply_only;
     }
 
     /* Success */
     out.pl.status = 0;
-    out.pl.surface_id = req.surface_id;
-    out.pl.cookie = req.cookie;
+    out.pl.surface_id = surface_id;
+    out.pl.cookie = cookie;
 
     /* Build and enqueue reply */
 send_reply_only:
