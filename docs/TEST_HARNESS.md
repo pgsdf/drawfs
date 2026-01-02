@@ -17,8 +17,8 @@ The drawfs test harness validates kernel behavior using black-box tests.
 Tests are designed to run without GPU hardware.
 
 ### Step 16
+Step 17: Run tests/step17_multi_session_interleaved_present_test.py to validate cross session isolation under interleaved presents.
 
 Run:
 
     sudo python3 tests/step16_multi_session_isolation_test.py
-

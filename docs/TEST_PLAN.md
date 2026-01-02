@@ -44,6 +44,7 @@ able to map the old surface ID, and the next created surface ID should restart
 from 1 in the new session.
 
 ## Step 16: Multi session isolation
+Step 17: Multi session interleaved present (two fds presenting in alternating order) plus close and continue on remaining session.
 
 Goal: verify that two independent sessions, meaning two open file descriptors, can create, map, and present surfaces without interfering with each other.
 
