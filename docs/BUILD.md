@@ -4,7 +4,7 @@ This repository contains a prototype FreeBSD kernel module and user space tests 
 
 ## Supported platform
 
-- FreeBSD 15 (15.0 RELEASE or 15 CURRENT)
+- FreeBSD 15
 - amd64 (current focus)
 
 ## Tooling
