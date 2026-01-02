@@ -169,60 +169,60 @@ static int drawfs_reply_display_list(struct drawfs_session *s, uint32_t msg_id);
 static int drawfs_reply_display_open(struct drawfs_session *s, uint32_t msg_id, const uint8_t *payload, size_t payload_len);
 static int drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id, const uint8_t *payload, size_t payload_len);
 static int drawfs_reply_surface_destroy(struct drawfs_session *s, uint32_t msg_id, const uint8_t *payload, size_t payload_len);
-static int
-drawfs_reply_surface_present(struct drawfs_session *s, uint32_t msg_id,
-    const uint8_t *payload, size_t payload_len)
-{
-    struct drawfs_surface_present_req req;
-    struct drawfs_surface_present_rep rep;
-    struct drawfs_surface *surf;
+static int drawfs_reply_surface_present(struct drawfs_session *s, uint32_t msg_id, const uint8_t *payload, size_t payload_len);
+static void drawfs_free_surfaces(struct drawfs_session *s);
 
-    bzero(&rep, sizeof(rep));
+static int drawfs_validate_frame(const uint8_t *buf, size_t n, struct drawfs_frame_hdr *out_hdr, uint32_t *out_err_offset);
+static int drawfs_process_frame(struct drawfs_session *s, const uint8_t *buf, size_t n);
 
-    if (payload_len < sizeof(req)) {
-        rep.status = EINVAL;
-        return drawfs_enqueue_event(s, DRAWFS_RPL_SURFACE_PRESENT, msg_id,
-            &rep, sizeof(rep));
-    }
+static int drawfs_ingest_bytes(struct drawfs_session *s, const uint8_t *buf, size_t n);
+static int drawfs_try_process_inbuf(struct drawfs_session *s);
 
-    memcpy(&req, payload, sizeof(req));
+static struct cdev *drawfs_dev;
 
-    if (s->display_handle == 0 || req.surface_id == 0) {
-        rep.status = EINVAL;
-        return drawfs_enqueue_event(s, DRAWFS_RPL_SURFACE_PRESENT, msg_id,
-            &rep, sizeof(rep));
-    }
+static struct cdevsw drawfs_cdevsw = {
+    .d_version = D_VERSION,
+    .d_open = drawfs_open,
+    .d_close = drawfs_close,
+    .d_read = drawfs_read,
+    .d_write = drawfs_write,
+    .d_ioctl = drawfs_ioctl,
+    .d_mmap_single = drawfs_mmap_single,
+    .d_poll = drawfs_poll,
+    .d_name = DRAWFS_DEVNAME,
+};
 
-    mtx_lock(&s->lock);
-    TAILQ_FOREACH(surf, &s->surfaces, link) {
-        if (surf->surface_id == req.surface_id)
-            break;
-    }
-    mtx_unlock(&s->lock);
-
-    if (surf == NULL) {
-        rep.status = ENOENT;
-        return drawfs_enqueue_event(s, DRAWFS_RPL_SURFACE_PRESENT, msg_id,
-            &rep, sizeof(rep));
-    }
-
-    /* Stubbed present: validate and acknowledge. Actual scanout is future work. */
-    rep.status = 0;
-    rep.surface_id = req.surface_id;
-    rep.reserved0 = 0;
-    rep.reserved1 = 0;
-
-    return drawfs_enqueue_event(s, DRAWFS_RPL_SURFACE_PRESENT, msg_id,
-        &rep, sizeof(rep));
-}
-
-
+/*
+ * Step 12: SURFACE_PRESENT
+ * Semantic present. For now this only records the active surface on the session.
+ * A later step will bind this to KMS/DRM, page flips, and damage tracking.
+ */
 static void
 drawfs_priv_dtor(void *data)
 {
     struct drawfs_session *s = (struct drawfs_session *)data;
     drawfs_session_free(s);
-};
+}
+
+/*
+ * Lookup a surface by ID.
+ * Caller does not need to hold s->lock.
+ */
+static struct drawfs_surface *
+drawfs_surface_lookup(struct drawfs_session *s, uint32_t surface_id)
+{
+    struct drawfs_surface *it;
+
+    mtx_lock(&s->lock);
+    TAILQ_FOREACH(it, &s->surfaces, link) {
+        if (it->id == surface_id) {
+            mtx_unlock(&s->lock);
+            return it;
+        }
+    }
+    mtx_unlock(&s->lock);
+    return NULL;
+}
 
 /*
  * Step 10B: SURFACE_DESTROY
@@ -312,6 +312,102 @@ build_reply:
  * Step 10A: SURFACE_CREATE
  * This is a semantic object only. No buffer mapping yet.
  */
+static int
+
+
+drawfs_reply_surface_present(struct drawfs_session *s, uint32_t msg_id,
+    const uint8_t *payload, size_t payload_len)
+{
+    struct drawfs_req_surface_present req;
+    struct drawfs_surface *surf;
+
+    /* Reply buffer */
+    struct {
+        struct drawfs_frame_hdr fh;
+        struct drawfs_msg_hdr   mh;
+        struct drawfs_rpl_surface_present pl;
+    } __packed out;
+
+    /* Event buffer */
+    struct {
+        struct drawfs_frame_hdr fh;
+        struct drawfs_msg_hdr   mh;
+        struct drawfs_evt_surface_presented pl;
+    } __packed ev;
+
+    bzero(&out, sizeof(out));
+    bzero(&ev, sizeof(ev));
+
+    if (payload_len < sizeof(req)) {
+        out.pl.status = EINVAL;
+        out.pl.surface_id = 0;
+        out.pl.cookie = 0;
+        goto send_reply_only;
+    }
+
+    bcopy(payload, &req, sizeof(req));
+
+    if (s->active_display_handle == 0 || req.surface_id == 0) {
+        out.pl.status = EINVAL;
+        out.pl.surface_id = 0;
+        out.pl.cookie = req.cookie;
+        goto send_reply_only;
+    }
+
+    surf = drawfs_surface_lookup(s, req.surface_id);
+    if (surf == NULL) {
+        out.pl.status = ENOENT;
+        out.pl.surface_id = 0;
+        out.pl.cookie = req.cookie;
+        goto send_reply_only;
+    }
+
+    /* Success */
+    out.pl.status = 0;
+    out.pl.surface_id = req.surface_id;
+    out.pl.cookie = req.cookie;
+
+    /* Build and enqueue reply */
+send_reply_only:
+    out.fh.magic = DRAWFS_MAGIC;
+    out.fh.version = DRAWFS_VERSION;
+    out.fh.header_bytes = (uint16_t)sizeof(struct drawfs_frame_hdr);
+    out.fh.frame_bytes = (uint32_t)sizeof(out);
+    out.fh.frame_id = 0;
+
+    out.mh.msg_type = DRAWFS_RPL_SURFACE_PRESENT;
+    out.mh.msg_flags = 0;
+    out.mh.msg_bytes = (uint32_t)sizeof(struct drawfs_msg_hdr) + (uint32_t)sizeof(out.pl);
+    out.mh.msg_id = msg_id;
+    out.mh.reserved = 0;
+
+    (void)drawfs_enqueue_event(s, &out, sizeof(out));
+
+    /* Only emit the async "presented" event on success. */
+    if (out.pl.status != 0)
+        return (0);
+
+    ev.fh.magic = DRAWFS_MAGIC;
+    ev.fh.version = DRAWFS_VERSION;
+    ev.fh.header_bytes = (uint16_t)sizeof(struct drawfs_frame_hdr);
+    ev.fh.frame_bytes = (uint32_t)sizeof(ev);
+    ev.fh.frame_id = 0;
+
+    ev.mh.msg_type = DRAWFS_EVT_SURFACE_PRESENTED;
+    ev.mh.msg_flags = 0;
+    ev.mh.msg_bytes = (uint32_t)sizeof(struct drawfs_msg_hdr) + (uint32_t)sizeof(ev.pl);
+    ev.mh.msg_id = 0;
+    ev.mh.reserved = 0;
+
+    ev.pl.surface_id = req.surface_id;
+    ev.pl.reserved = 0;
+    ev.pl.cookie = req.cookie;
+
+    (void)drawfs_enqueue_event(s, &ev, sizeof(ev));
+
+    return (0);
+}
+
 static int
 drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id,
     const uint8_t *payload, size_t payload_len)
