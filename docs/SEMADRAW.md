@@ -1,5 +1,10 @@
 # drawfs and semadraw
 
+## Tooling note
+
+The reference integration work for SemaDraw assumes Zig 0.15.2 when Zig tooling is required.
+
+
 semadraw is a user-space rendering and composition library.
 
 ## Relationship

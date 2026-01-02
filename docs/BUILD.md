@@ -1,68 +1,49 @@
-# Building drawfs
+# Build and install
 
-This repository contains a prototype FreeBSD kernel module and user space tests for the DrawFS protocol.
+## Prerequisites
 
-## Supported platform
+- FreeBSD 15 with kernel sources in `/usr/src`
+- Base build toolchain (clang, make)
+- Python 3 for the test harness
+- Zig 0.15.2 is optional and only needed if you are building SemaDraw related tooling
 
-- FreeBSD 15
-- amd64 (current focus)
-
-## Tooling
-
-Required:
-
-- FreeBSD base toolchain (clang, make)
-- FreeBSD src tree installed at `/usr/src`
-- Python 3 for the test suite
-
-Optional:
-
-- Zig 0.15.2 (reserved for upcoming user space components and integration work, not required for the kernel module)
-
-## Quick start
+## Using build.sh
 
 From the repository root:
 
 ```sh
-# Install sources into /usr/src and build the kernel module
-sh ./build.sh
+# Copy kernel sources into /usr/src (sys/dev + sys/modules)
+./build.sh install
 
-# Install, build, and load the module
-sh ./build.sh load
+# Build the kmod (uses /usr/src/sys/modules/drawfs)
+./build.sh build
+
+# Load the module (also unloads any prior drawfs)
+./build.sh load
+
+# Run the test suite (step based harness)
+./build.sh test
 ```
 
-`build.sh` performs these actions in order:
-
-1. Copies `sys/dev/drawfs` and `sys/modules/drawfs` into the local src tree (default `/usr/src`) using `rsync`
-2. Builds the module from `/usr/src/sys/modules/drawfs`
-3. Prints the module object directory path
-4. Optionally unloads and loads `drawfs.ko` when invoked with `load`
-
-You can override the src tree path:
+## Manual build
 
 ```sh
-SRCROOT=/path/to/src sh ./build.sh load
+sudo rsync -a sys/dev/drawfs/ /usr/src/sys/dev/drawfs/
+sudo rsync -a sys/modules/drawfs/ /usr/src/sys/modules/drawfs/
+
+cd /usr/src/sys/modules/drawfs
+sudo make clean
+sudo make
+
+OBJDIR=$(sudo make -V .OBJDIR)
+sudo kldunload drawfs 2>/dev/null || true
+sudo kldload "$OBJDIR/drawfs.ko"
 ```
 
-## Running tests
-
-All tests live in `tests/`.
-
-Step 11 mmap test:
+## Running a specific step
 
 ```sh
 cd tests
 sudo python3 step11_surface_mmap_test.py
-```
-
-Step 12 surface present test:
-
-```sh
-cd tests
 sudo python3 step12_surface_present_test.py
 ```
-
-## Notes
-
-- The module currently creates `/dev/draw` and implements a subset of the protocol sufficient for the tests.
-- The module is still a prototype. Expect interfaces and message types to evolve quickly.
