@@ -32,6 +32,7 @@ enum drawfs_msg_type {
     DRAWFS_RPL_DISPLAY_OPEN  = 0x8011,
     DRAWFS_RPL_SURFACE_CREATE = 0x8020,
     DRAWFS_RPL_SURFACE_DESTROY = 0x8021,
+    DRAWFS_RPL_SURFACE_PRESENT = 0x8022,
     DRAWFS_RPL_ERROR        = 0x8FFF,
 
     DRAWFS_REQ_HELLO        = 0x0001,
@@ -39,6 +40,7 @@ enum drawfs_msg_type {
     DRAWFS_REQ_DISPLAY_OPEN  = 0x0011,
     DRAWFS_REQ_SURFACE_CREATE = 0x0020,
     DRAWFS_REQ_SURFACE_DESTROY = 0x0021,
+    DRAWFS_REQ_SURFACE_PRESENT = 0x0022,
 };
 
 enum drawfs_err_code {
@@ -163,5 +165,18 @@ struct drawfs_surface_destroy_rep {
     int32_t  status;
     uint32_t surface_id;
 };
+
+struct drawfs_surface_present_req {
+    uint32_t surface_id;
+    uint32_t flags; /* reserved for future (vsync, damage tracking, etc.) */
+};
+
+struct drawfs_surface_present_rep {
+    int32_t status;
+    uint32_t surface_id;
+    uint32_t reserved0;
+    uint32_t reserved1;
+};
+
 
 #endif

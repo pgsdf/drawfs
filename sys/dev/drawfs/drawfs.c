@@ -69,6 +69,7 @@ struct drawfs_session {
     /* Display binding (Step 9) */
     uint32_t active_display_id;
     uint32_t map_surface_id; /* surface selected for mmap */
+    uint32_t active_surface_id; /* last presented surface */
     uint32_t next_display_handle;
     uint32_t active_display_handle;
 
@@ -168,6 +169,7 @@ static int drawfs_reply_display_list(struct drawfs_session *s, uint32_t msg_id);
 static int drawfs_reply_display_open(struct drawfs_session *s, uint32_t msg_id, const uint8_t *payload, size_t payload_len);
 static int drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id, const uint8_t *payload, size_t payload_len);
 static int drawfs_reply_surface_destroy(struct drawfs_session *s, uint32_t msg_id, const uint8_t *payload, size_t payload_len);
+static int drawfs_reply_surface_present(struct drawfs_session *s, uint32_t msg_id, const uint8_t *payload, size_t payload_len);
 static void drawfs_free_surfaces(struct drawfs_session *s);
 
 static int drawfs_validate_frame(const uint8_t *buf, size_t n, struct drawfs_frame_hdr *out_hdr, uint32_t *out_err_offset);
@@ -188,7 +190,53 @@ static struct cdevsw drawfs_cdevsw = {
     .d_mmap_single = drawfs_mmap_single,
     .d_poll = drawfs_poll,
     .d_name = DRAWFS_DEVNAME,
-};
+}
+
+/*
+ * Step 12: SURFACE_PRESENT
+ * Semantic present. For now this only records the active surface on the session.
+ * A later step will bind this to KMS/DRM, page flips, and damage tracking.
+ */
+static int
+drawfs_reply_surface_present(struct drawfs_session *s, uint32_t msg_id,
+    const uint8_t *payload, size_t payload_len)
+{
+    struct drawfs_surface_present_req req;
+    struct drawfs_surface_present_rep rep;
+    struct drawfs_surface *surf;
+
+    bzero(&rep, sizeof(rep));
+    rep.status = 0;
+    rep.surface_id = 0;
+
+    if (payload_len < sizeof(req)) {
+        rep.status = EINVAL;
+        return (drawfs_reply(s, DRAWFS_RPL_SURFACE_PRESENT, msg_id, &rep, sizeof(rep)));
+    }
+
+    memcpy(&req, payload, sizeof(req));
+
+    if (s->active_display_handle == 0 || req.surface_id == 0) {
+        rep.status = EINVAL;
+        rep.surface_id = 0;
+        return (drawfs_reply(s, DRAWFS_RPL_SURFACE_PRESENT, msg_id, &rep, sizeof(rep)));
+    }
+
+    surf = drawfs_surface_lookup(s, req.surface_id);
+    if (surf == NULL) {
+        rep.status = ENOENT;
+        rep.surface_id = 0;
+        return (drawfs_reply(s, DRAWFS_RPL_SURFACE_PRESENT, msg_id, &rep, sizeof(rep)));
+    }
+
+    /* Record. Real scanout comes later. */
+    s->active_surface_id = req.surface_id;
+
+    rep.status = 0;
+    rep.surface_id = req.surface_id;
+    return (drawfs_reply(s, DRAWFS_RPL_SURFACE_PRESENT, msg_id, &rep, sizeof(rep)));
+}
+;
 
 static void
 drawfs_priv_dtor(void *data)
@@ -1019,6 +1067,9 @@ drawfs_process_frame(struct drawfs_session *s, const uint8_t *buf, size_t n)
 
         case DRAWFS_REQ_SURFACE_DESTROY:
             (void)drawfs_reply_surface_destroy(s, mh.msg_id, payload, payload_len);
+            break;
+        case DRAWFS_REQ_SURFACE_PRESENT:
+            (void)drawfs_reply_surface_present(s, mh.msg_id, payload, payload_len);
             break;
 
         default:
