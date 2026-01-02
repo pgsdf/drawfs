@@ -1,49 +1,49 @@
-# Build and install
+Requires Zig 0.15.2
+
+# Build and test (kmod)
+
+This repository includes a small helper script, `build.sh`, that installs the kernel module
+sources into your FreeBSD source tree, builds the module, loads it, and runs a selected test.
 
 ## Prerequisites
 
-- FreeBSD 15 with kernel sources in `/usr/src`
-- Base build toolchain (clang, make)
-- Python 3 for the test harness
-- Zig 0.15.2 is optional and only needed if you are building SemaDraw related tooling
+- FreeBSD source tree available at `/usr/src` (or set `SRCROOT=/path/to/src`)
+- `rsync` installed (used by `build.sh install`)
+- Python 3 installed (for tests)
 
-## Using build.sh
+## Quick start
 
-From the repository root:
-
-```sh
-# Copy kernel sources into /usr/src (sys/dev + sys/modules)
-./build.sh install
-
-# Build the kmod (uses /usr/src/sys/modules/drawfs)
-./build.sh build
-
-# Load the module (also unloads any prior drawfs)
-./build.sh load
-
-# Run the test suite (step based harness)
-./build.sh test
-```
-
-## Manual build
+From the repo root:
 
 ```sh
-sudo rsync -a sys/dev/drawfs/ /usr/src/sys/dev/drawfs/
-sudo rsync -a sys/modules/drawfs/ /usr/src/sys/modules/drawfs/
-
-cd /usr/src/sys/modules/drawfs
-sudo make clean
-sudo make
-
-OBJDIR=$(sudo make -V .OBJDIR)
-sudo kldunload drawfs 2>/dev/null || true
-sudo kldload "$OBJDIR/drawfs.ko"
+chmod +x build.sh
+sudo ./build.sh all tests/step11_surface_mmap_test.py
 ```
 
-## Running a specific step
+That will:
+
+1. Copy `sys/dev/drawfs` to `/usr/src/sys/dev/drawfs`
+2. Copy `sys/modules/drawfs` to `/usr/src/sys/modules/drawfs`
+3. Build the module via `/usr/src/sys/modules/drawfs`
+4. `kldload` the resulting `drawfs.ko`
+5. Run the selected test from `tests/`
+
+## Common commands
 
 ```sh
-cd tests
-sudo python3 step11_surface_mmap_test.py
-sudo python3 step12_surface_present_test.py
+sudo ./build.sh install
+sudo ./build.sh build
+sudo ./build.sh load
+sudo ./build.sh unload
+sudo ./build.sh test tests/step11_surface_mmap_test.py
 ```
+
+## Verify you are building the intended sources
+
+If you suspect a stale install under `/usr/src`, run:
+
+```sh
+./build.sh verify
+```
+
+It prints file mtimes and a few greps that help confirm the installed sources match the repo.
