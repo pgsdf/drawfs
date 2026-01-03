@@ -426,7 +426,12 @@ send_reply_only:
     out.mh.msg_id = msg_id;
     out.mh.reserved = 0;
 
-    (void)drawfs_enqueue_event(s, &out, sizeof(out));
+    {
+		int e;
+		e = drawfs_enqueue_event(s, &out, sizeof(out));
+		if (e != 0)
+			return (e);
+	}
 
     /* Only emit the async "presented" event on success. */
     if (out.pl.status != 0)
@@ -444,9 +449,9 @@ send_reply_only:
     ev.mh.msg_id = 0;
     ev.mh.reserved = 0;
 
-    ev.pl.surface_id = req.surface_id;
+    ev.pl.surface_id = surface_id;
     ev.pl.reserved = 0;
-    ev.pl.cookie = req.cookie;
+    ev.pl.cookie = cookie;
 
     (void)drawfs_enqueue_event(s, &ev, sizeof(ev));
 
@@ -513,7 +518,7 @@ drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id,
     if (s->surfaces_count >= DRAWFS_MAX_SURFACES ||
         s->surfaces_bytes + total64 > DRAWFS_MAX_SESSION_SURFACE_BYTES) {
         mtx_unlock(&s->lock);
-        rep.status = ENOSPC;
+        rep.status = ENOMEM;
         free(sf, M_DRAWFS);
         sf = NULL;
         goto build_reply;
@@ -980,20 +985,34 @@ drawfs_enqueue_event(struct drawfs_session *s, const void *buf, size_t len)
     ev->len = len;
     memcpy(ev->bytes, buf, len);
 
-    mtx_lock(&s->lock);
+	mtx_lock(&s->lock);
 
-    if (s->closing) {
-        s->stats.events_dropped += 1;
-        mtx_unlock(&s->lock);
-        free(ev->bytes, M_DRAWFS);
-        free(ev, M_DRAWFS);
-        return (ENXIO);
-    }
+	/*
+	 * Step 19: event queue backpressure.
+	 * Bound the per-session output queue (events and replies). If the queue
+	 * exceeds the limit, reject with ENOSPC so userland is forced to drain.
+	 */
+	if (s->evq_bytes + len > DRAWFS_MAX_EVQ_BYTES) {
+		/* Reuse the existing stats counter for dropped outgoing messages. */
+		s->stats.events_dropped++;
+		mtx_unlock(&s->lock);
+		free(ev->bytes, M_DRAWFS);
+		free(ev, M_DRAWFS);
+		return (ENOSPC);
+	}
 
-    TAILQ_INSERT_TAIL(&s->evq, ev, link);
-    s->evq_bytes += len;
+	if (s->closing) {
+		s->stats.events_dropped++;
+		mtx_unlock(&s->lock);
+		free(ev->bytes, M_DRAWFS);
+		free(ev, M_DRAWFS);
+		return (ENXIO);
+	}
 
-    s->stats.events_enqueued += 1;
+	TAILQ_INSERT_TAIL(&s->evq, ev, link);
+	s->evq_bytes += len;
+
+	s->stats.events_enqueued++;
     s->stats.bytes_out += (uint64_t)len;
 
     cv_signal(&s->cv);
@@ -1240,9 +1259,14 @@ drawfs_process_frame(struct drawfs_session *s, const uint8_t *buf, size_t n)
         case DRAWFS_REQ_SURFACE_DESTROY:
             (void)drawfs_reply_surface_destroy(s, mh.msg_id, payload, payload_len);
             break;
-        case DRAWFS_REQ_SURFACE_PRESENT:
-            (void)drawfs_reply_surface_present(s, mh.msg_id, payload, payload_len);
+        case DRAWFS_REQ_SURFACE_PRESENT: {
+            int error;
+
+            error = drawfs_reply_surface_present(s, mh.msg_id, payload, payload_len);
+            if (error != 0)
+                return (error);
             break;
+        }
 
         default:
             s->stats.messages_unsupported += 1;

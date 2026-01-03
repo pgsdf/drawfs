@@ -5,6 +5,9 @@
 #define DRAWFS_NODEPATH "/dev/draw"
 
 #define DRAWFS_MAX_FRAME_BYTES   (1024 * 1024)
+
+/* Maximum bytes queued for events and replies per session. */
+#define DRAWFS_MAX_EVQ_BYTES (8 * 1024)
 #define DRAWFS_MAX_EVENT_BYTES   (64 * 1024)
 #define DRAWFS_MAX_MSG_BYTES     (512 * 1024)
 
