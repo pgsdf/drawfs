@@ -15,7 +15,7 @@ Environment
   - Python 3
 """
 
-import os, struct, errno, time, fcntl
+import os, struct, errno, time, select
 
 DEV = "/dev/draw"
 
@@ -52,17 +52,13 @@ def make_frame(frame_id: int, msgs: list[bytes]) -> bytes:
     return frame
 
 def read_one(fd: int, timeout_ms: int = 2000) -> bytes:
-    # Simple blocking read with deadline using polling sleeps.
+    """Read one frame, using select to avoid indefinite blocking."""
     deadline = time.time() + (timeout_ms / 1000.0)
-    while True:
-        try:
+    while time.time() < deadline:
+        readable, _, _ = select.select([fd], [], [], 0.1)
+        if fd in readable:
             return os.read(fd, 4096)
-        except InterruptedError:
-            continue
-        except OSError as e:
-            raise
-        if time.time() > deadline:
-            raise RuntimeError("timeout waiting for message")
+    raise RuntimeError("timeout waiting for message")
 
 def parse_first_msg(frame: bytes):
     if len(frame) < struct.calcsize(FH_FMT) + struct.calcsize(MH_FMT):
@@ -80,25 +76,6 @@ def decode_surface_create(payload: bytes):
 
 def send(fd: int, frame: bytes):
     os.write(fd, frame)
-
-# Stats ioctl: _IOR('D', 0x01, struct drawfs_stats)
-# FreeBSD _IOR: ((0x40000000) | (((size) & 0x1fff) << 16) | ((group) << 8) | (num))
-# struct drawfs_stats is 9*8 + 2*4 = 80 bytes
-DRAWFSGIOC_STATS = 0x40504401  # _IOR('D', 0x01, 80)
-
-def get_stats(fd: int):
-    buf = bytearray(80)
-    fcntl.ioctl(fd, DRAWFSGIOC_STATS, buf)
-    # Parse: 9 uint64s, 2 uint32s
-    vals = struct.unpack("<QQQQQQQQQII", buf)
-    return {
-        'frames_received': vals[0],
-        'frames_processed': vals[1],
-        'events_enqueued': vals[5],
-        'events_dropped': vals[6],
-        'evq_depth': vals[9],
-        'inbuf_bytes': vals[10],
-    }
 
 def main():
     fd = os.open(DEV, os.O_RDWR)
@@ -149,40 +126,13 @@ def main():
         if not hit:
             raise SystemExit("FAIL: did not hit backpressure limit")
 
-        # Debug: check queue depth before draining
-        stats = get_stats(fd)
-        print(f"DEBUG: evq_depth={stats['evq_depth']}, events_enqueued={stats['events_enqueued']}, events_dropped={stats['events_dropped']}")
-
-        # Try non-blocking read on a fresh fd to see what happens
-        # (note: this opens a NEW session, so it won't see our queue - just testing the mechanism)
-        fd_nb = os.open(DEV, os.O_RDWR | os.O_NONBLOCK)
-        try:
-            test_read = os.read(fd_nb, 4096)
-            print(f"DEBUG: non-blocking NEW fd read got {len(test_read)} bytes (unexpected!)")
-        except BlockingIOError:
-            print("DEBUG: non-blocking NEW fd returned EAGAIN (expected - new session is empty)")
-        except Exception as e:
-            print(f"DEBUG: non-blocking NEW fd error: {e}")
-        finally:
-            os.close(fd_nb)
-
-        # The real test: try poll() to see if our fd is readable
-        import select
-        readable, _, _ = select.select([fd], [], [], 0.1)
-        if fd in readable:
-            print("DEBUG: select() says fd is readable - queue should have data")
-        else:
-            print("DEBUG: select() says fd is NOT readable - poll isn't seeing the queue!")
-
-        # Drain some frames to make space again.
-        # Use select() before each read to avoid blocking
-        import select
+        # Drain frames to make space again.
+        # Use select() before each read to avoid blocking on empty queue.
         drained = 0
         start = time.time()
-        while drained < 200 and (time.time() - start) < 2.0:
+        while drained < 500 and (time.time() - start) < 5.0:
             readable, _, _ = select.select([fd], [], [], 0.5)
             if fd not in readable:
-                print(f"DEBUG: select returned not readable after draining {drained}")
                 break
             fr = os.read(fd, 4096)
             if not fr:
