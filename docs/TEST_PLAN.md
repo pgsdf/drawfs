@@ -4,50 +4,57 @@
 - Verify protocol compliance
 - Ensure robustness against malformed input
 - Guarantee deterministic behavior
+- Validate resource limits and backpressure
 
 ## Test Types
 - Unit tests (protocol parsing)
 - Integration tests (kernel + user space)
 - Stress and fuzz testing
 
-## Current Focus
-- Step 11 surface mmap correctness
-- Lifetime and cleanup behavior
-- Error propagation
+## Shared Test Module
 
-## Step 13: Surface present sequencing
+All tests use the shared `tests/drawfs_test.py` module for consistent protocol encoding.
+See `docs/TEST_HARNESS.md` for full API documentation.
 
-Run:
+## Test Steps
 
-```
+### Step 6-9: Protocol Basics
+- Step 6: Multi-message frames and poll readiness
+- Step 7B: Stats ioctl with protocol traffic
+- Step 8: DISPLAY_LIST reply decoding
+- Step 9: DISPLAY_OPEN for valid and invalid display IDs
+
+### Step 10-11: Surface Lifecycle
+- Step 10A: SURFACE_CREATE lifecycle and error cases
+- Step 10B: SURFACE_DESTROY and double-destroy errors
+- Step 11: MAP_SURFACE ioctl and mmap write/readback
+
+### Step 12-14: Present Path
+- Step 12: End-to-end present flow with mmap and event
+- Step 13: Present sequencing and cookie roundtrip
+- Step 14: Multiple surfaces with round-robin presents
+
+### Step 15-17: Session Management
+- Step 15: Per-fd session state and cleanup on close
+- Step 16: Two sessions with independent surfaces
+- Step 17: Interleaved presents across sessions, close and continue
+
+### Step 18-19: Resource Limits
+- Step 18: EFBIG for oversized surfaces, ENOSPC for too many surfaces
+- Step 19: Event queue backpressure (ENOSPC when full, recovery after drain)
+
+## Running Tests
+
+Individual test:
+```sh
 sudo python3 tests/step13_present_sequence_test.py
 ```
 
-Validates reply and event ordering and cookie roundtrip.
-
-
-## Step 14: Multi Surface Round Robin Present
-
-Runs `tests/step14_multi_surface_round_robin_test.py` to validate creating multiple surfaces, writing distinct patterns via MAP_SURFACE plus mmap, and presenting in a round robin sequence while verifying reply and SURFACE_PRESENTED event ordering and cookies.
-
-## Step 15: Session Cleanup and Reopen
-
-Run:
-
-```
-sudo python3 tests/step15_session_cleanup_reopen_test.py
+All tests:
+```sh
+./build.sh test
 ```
 
-Validates that drawfs session state is per file descriptor and that close(2)
-cleans up surfaces and mappings. After closing the fd, a new open must not be
-able to map the old surface ID, and the next created surface ID should restart
-from 1 in the new session.
+## Current Status
 
-## Step 16: Multi session isolation
-Step 17: Multi session interleaved present (two fds presenting in alternating order) plus close and continue on remaining session.
-
-Goal: verify that two independent sessions, meaning two open file descriptors, can create, map, and present surfaces without interfering with each other.
-
-Test: `tests/step16_multi_session_isolation_test.py`
-
-Expected: both sessions receive a `SURFACE_PRESENTED` event with the matching surface id and cookie for that session.
+All steps (6-19) are implemented and passing.
