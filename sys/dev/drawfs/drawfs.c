@@ -980,33 +980,54 @@ drawfs_enqueue_event(struct drawfs_session *s, const void *buf, size_t len)
     if (len > DRAWFS_MAX_EVENT_BYTES)
         return (EFBIG);
 
-    ev = malloc(sizeof(*ev), M_DRAWFS, M_WAITOK | M_ZERO);
-    ev->bytes = malloc(len, M_DRAWFS, M_WAITOK);
-    ev->len = len;
-    memcpy(ev->bytes, buf, len);
-
-	mtx_lock(&s->lock);
-
 	/*
 	 * Step 19: event queue backpressure.
+	 * Check limits before allocating to reduce kernel churn when full.
 	 * Bound the per-session output queue (events and replies). If the queue
 	 * exceeds the limit, reject with ENOSPC so userland is forced to drain.
 	 */
+	mtx_lock(&s->lock);
+
 	if (s->evq_bytes + len > DRAWFS_MAX_EVQ_BYTES) {
-		/* Reuse the existing stats counter for dropped outgoing messages. */
 		s->stats.events_dropped++;
 		mtx_unlock(&s->lock);
-		free(ev->bytes, M_DRAWFS);
-		free(ev, M_DRAWFS);
 		return (ENOSPC);
 	}
 
 	if (s->closing) {
 		s->stats.events_dropped++;
 		mtx_unlock(&s->lock);
+		return (ENXIO);
+	}
+
+	mtx_unlock(&s->lock);
+
+	/* Allocate only after passing the limit check */
+	ev = malloc(sizeof(*ev), M_DRAWFS, M_WAITOK | M_ZERO);
+	ev->bytes = malloc(len, M_DRAWFS, M_WAITOK);
+	ev->len = len;
+	memcpy(ev->bytes, buf, len);
+
+	mtx_lock(&s->lock);
+
+	/*
+	 * Re-check after re-acquiring lock since state could have changed
+	 * while we were allocating without the lock held.
+	 */
+	if (s->closing) {
+		s->stats.events_dropped++;
+		mtx_unlock(&s->lock);
 		free(ev->bytes, M_DRAWFS);
 		free(ev, M_DRAWFS);
 		return (ENXIO);
+	}
+
+	if (s->evq_bytes + len > DRAWFS_MAX_EVQ_BYTES) {
+		s->stats.events_dropped++;
+		mtx_unlock(&s->lock);
+		free(ev->bytes, M_DRAWFS);
+		free(ev, M_DRAWFS);
+		return (ENOSPC);
 	}
 
 	TAILQ_INSERT_TAIL(&s->evq, ev, link);
