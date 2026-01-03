@@ -153,18 +153,26 @@ def main():
         stats = get_stats(fd)
         print(f"DEBUG: evq_depth={stats['evq_depth']}, events_enqueued={stats['events_enqueued']}, events_dropped={stats['events_dropped']}")
 
-        # Try non-blocking read first to see what happens
-        import fcntl as fcntl_mod
-        flags = fcntl_mod.fcntl(fd, fcntl_mod.F_GETFL)
-        fcntl_mod.fcntl(fd, fcntl_mod.F_SETFL, flags | os.O_NONBLOCK)
+        # Try non-blocking read on a fresh fd to see what happens
+        # (note: this opens a NEW session, so it won't see our queue - just testing the mechanism)
+        fd_nb = os.open(DEV, os.O_RDWR | os.O_NONBLOCK)
         try:
-            test_read = os.read(fd, 4096)
-            print(f"DEBUG: non-blocking read got {len(test_read)} bytes")
+            test_read = os.read(fd_nb, 4096)
+            print(f"DEBUG: non-blocking NEW fd read got {len(test_read)} bytes (unexpected!)")
         except BlockingIOError:
-            print("DEBUG: non-blocking read returned EAGAIN (queue appears empty to read!)")
+            print("DEBUG: non-blocking NEW fd returned EAGAIN (expected - new session is empty)")
         except Exception as e:
-            print(f"DEBUG: non-blocking read error: {e}")
-        fcntl_mod.fcntl(fd, fcntl_mod.F_SETFL, flags)  # restore
+            print(f"DEBUG: non-blocking NEW fd error: {e}")
+        finally:
+            os.close(fd_nb)
+
+        # The real test: try poll() to see if our fd is readable
+        import select
+        readable, _, _ = select.select([fd], [], [], 0.1)
+        if fd in readable:
+            print("DEBUG: select() says fd is readable - queue should have data")
+        else:
+            print("DEBUG: select() says fd is NOT readable - poll isn't seeing the queue!")
 
         # Drain some frames to make space again.
         drained = 0
