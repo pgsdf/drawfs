@@ -83,13 +83,13 @@ def send(fd: int, frame: bytes):
 
 # Stats ioctl: _IOR('D', 0x01, struct drawfs_stats)
 # FreeBSD _IOR: ((0x40000000) | (((size) & 0x1fff) << 16) | ((group) << 8) | (num))
-# struct drawfs_stats is 8*10 + 4*2 = 88 bytes
-DRAWFSGIOC_STATS = 0x40584401  # _IOR('D', 0x01, 88)
+# struct drawfs_stats is 9*8 + 2*4 = 80 bytes
+DRAWFSGIOC_STATS = 0x40504401  # _IOR('D', 0x01, 80)
 
 def get_stats(fd: int):
-    buf = bytearray(88)
+    buf = bytearray(80)
     fcntl.ioctl(fd, DRAWFSGIOC_STATS, buf)
-    # Parse: 8 uint64s, 2 uint32s
+    # Parse: 9 uint64s, 2 uint32s
     vals = struct.unpack("<QQQQQQQQQII", buf)
     return {
         'frames_received': vals[0],
