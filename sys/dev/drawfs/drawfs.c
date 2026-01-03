@@ -77,6 +77,10 @@ struct drawfs_session {
     struct drawfs_surface_list surfaces;
     uint32_t next_surface_id;
 
+    /* Step 18 hardening: surface resource accounting */
+    uint32_t surfaces_count;
+    uint64_t surfaces_bytes;
+
     /* Stats (per session) */
     struct drawfs_stats stats;
 };
@@ -260,6 +264,15 @@ drawfs_reply_surface_destroy(struct drawfs_session *s, uint32_t msg_id,
     }
     if (sf != NULL)
         TAILQ_REMOVE(&s->surfaces, sf, link);
+
+    if (sf != NULL) {
+        if (s->surfaces_count > 0)
+            s->surfaces_count--;
+        if (s->surfaces_bytes >= sf->bytes_total)
+            s->surfaces_bytes -= sf->bytes_total;
+        else
+            s->surfaces_bytes = 0;
+    }
 
     /* If this surface was selected for mmap, clear selection */
     if (sf != NULL && s->map_surface_id == sf->id)
@@ -453,6 +466,7 @@ drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id,
     struct drawfs_surface_create_req req;
     struct drawfs_surface_create_rep rep;
     struct drawfs_surface *sf;
+    uint64_t stride64, total64;
 
     rep.status = 0;
     rep.surface_id = 0;
@@ -484,18 +498,38 @@ drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id,
         goto build_reply;
     }
 
+    /* Step 18 hardening: compute size in 64-bit and clamp. */
+    stride64 = (uint64_t)req.width_px * 4ULL;
+    total64 = stride64 * (uint64_t)req.height_px;
+    if (stride64 == 0 || total64 == 0 || total64 > DRAWFS_MAX_SURFACE_BYTES) {
+        rep.status = EFBIG;
+        goto build_reply;
+    }
+
     /* Allocate and record a semantic surface object. */
     sf = malloc(sizeof(*sf), M_DRAWFS, M_WAITOK | M_ZERO);
 
     mtx_lock(&s->lock);
+    if (s->surfaces_count >= DRAWFS_MAX_SURFACES ||
+        s->surfaces_bytes + total64 > DRAWFS_MAX_SESSION_SURFACE_BYTES) {
+        mtx_unlock(&s->lock);
+        rep.status = ENOSPC;
+        free(sf, M_DRAWFS);
+        sf = NULL;
+        goto build_reply;
+    }
+
     sf->id = s->next_surface_id++;
     sf->width_px = req.width_px;
     sf->height_px = req.height_px;
     sf->format = req.format;
-    sf->stride_bytes = req.width_px * 4;
-    sf->bytes_total = sf->stride_bytes * req.height_px;
+    sf->stride_bytes = (uint32_t)stride64;
+    sf->bytes_total = (uint32_t)total64;
 
     TAILQ_INSERT_TAIL(&s->surfaces, sf, link);
+
+    s->surfaces_count++;
+    s->surfaces_bytes += total64;
 
     rep.surface_id = sf->id;
     rep.stride_bytes = sf->stride_bytes;
@@ -564,8 +598,19 @@ drawfs_free_surfaces(struct drawfs_session *s)
         if (vmobj != NULL)
             vm_object_deallocate(vmobj);
 
+        if (s->surfaces_count > 0)
+            s->surfaces_count--;
+        if (s->surfaces_bytes >= sf->bytes_total)
+            s->surfaces_bytes -= sf->bytes_total;
+        else
+            s->surfaces_bytes = 0;
+
         free(sf, M_DRAWFS);
     }
+
+    /* Ensure accounting is fully reset. */
+    s->surfaces_count = 0;
+    s->surfaces_bytes = 0;
 }
 
 static int
@@ -878,7 +923,7 @@ case DRAWFSGIOC_STATS: {
     default:
         return (ENOTTY);
     }
-    return (0);
+	return (0);
 }
 
 
@@ -910,9 +955,8 @@ drawfs_session_free(struct drawfs_session *s)
         s->in_len = 0;
         s->in_cap = 0;
     }
-    mtx_unlock(&s->lock);
 
-    drawfs_free_surfaces(s);
+    mtx_unlock(&s->lock);
 
     seldrain(&s->sel);
     cv_destroy(&s->cv);

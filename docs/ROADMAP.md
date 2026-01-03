@@ -1,48 +1,37 @@
 # ROADMAP
 
-## Phase 0: Specification
-* Protocol definition
-* State machines
-* Error semantics
-* Test harness
+This document is a forward-looking backlog for drawfs. Items are grouped by priority and include optional hardening work we want to keep visible.
 
-## Phase 1: Kernel prototype
-* Character device protocol
-* Blocking reads and poll semantics
-* Display discovery and open
-* Surface lifecycle (create and destroy)
-* mmap backed surface memory and MAP_SURFACE ioctl
-* Present request, present reply, and presented event
-* Present sequencing guarantees
-* Round robin surface selection and present
-* Session cleanup and reopen
-* Multi session isolation
-* Multi session interleaved present
+## Near term
 
-## Phase 2: Real display bring up
-* DRM KMS integration
-* Mode setting and page flip
-* Tie presents to vblank or page flip completion
-* Optional dumb buffer or GEM integration for zero copy paths
+### Step 18: Resource limits and hardening
+- Enforce per-session surface limits in SURFACE_CREATE and return ENOSPC when a limit is hit.
+- Ensure all surfaces release their VM objects on destroy and on session teardown (vm_object_deallocate).
+- Add a regression test that proves the limit is deterministic and does not fall back to ENOMEM.
+- Confirm the MAP_SURFACE selection and mmap path cannot cross sessions.
 
-## Phase 3: Performance and ergonomics
-* Damage tracking and partial updates
-* Frame pacing and back pressure signals
-* Per display present queues
-* Better statistics and observability
+## Next
 
+### Protocol and ABI
+- Add explicit protocol version negotiation and a feature bitmask in HELLO.
+- Document all message and event payloads with exact sizes and alignment.
+- Add negative tests for malformed frames and messages (lengths, alignment, unknown types).
 
+### Observability
+- Add a lightweight stats ioctl for surface limits, current usage, and event queue depth.
+- Add optional debug logging behind a compile-time flag.
 
+## Optional but recommended
 
+### Tunables and policy
+- Make surface limits tunable via sysctl (read only by default) and document safe defaults.
+- Consider per-process caps using credentials or devfs rules if multi-user scenarios matter.
 
+### Robustness
+- Add fuzzing of the frame parser and message decoder (kcov, syzkaller style harness, or userland fuzz against a mock).
+- Add lock order notes and ASSERTs for invariants in debug builds.
+- Expand tests to cover close during blocking read, close during poll, and close while a surface is selected for mmap.
 
-## Backlog and recommended optional work
-* Run a KNF and formatting pass on sys/dev/drawfs/drawfs.c and split it into smaller translation units once the API stabilizes
-* Add a stress test that creates, maps, presents, destroys, and closes sessions in a loop to catch vm_object leaks and swap backed growth
-* Add tests for destroy while mapped, close while mapped, multiple mmaps, and fork then close
-* Add lightweight observability via sysctl counters for sessions, surfaces, vm_objects, bytes_total, and present events
-* Add protocol fuzzing at the frame and message layers to harden length, alignment, and bounds checking
-* Add a permission model for display open and present (root only by default, with an option for a dedicated group)
-* Add multi display selection and hotplug semantics once DRM KMS integration lands
-* Add damage tracking so clients can present dirty rectangles instead of full surface swaps
-* Add a future path for zero copy or DMA BUF style sharing where available
+### Cleanup
+- Style pass: consistent indentation, brace placement, and removing unreachable code.
+- Split drawfs.c into smaller translation units (protocol, surfaces, events, ioctl, mmap) when the API stabilizes.

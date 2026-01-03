@@ -5,6 +5,17 @@
 - Malformed protocol messages
 - Resource exhaustion attacks
 
+## Resource exhaustion hardening
+
+The module enforces conservative defaults to reduce trivial DoS by unbounded
+surface creation:
+
+- Maximum surfaces per session
+- Maximum bytes per surface
+- Maximum cumulative surface bytes per session
+
+These values can be made configurable via sysctl later.
+
 ## Security Principles
 - No raw framebuffer access
 - Kernel-enforced validation

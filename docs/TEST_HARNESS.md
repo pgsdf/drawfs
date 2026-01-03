@@ -1,24 +1,37 @@
 # TEST HARNESS
 
-The drawfs test harness validates kernel behavior using black-box tests.
+The drawfs test harness validates kernel behavior using black box tests that talk to /dev/draw.
 
-## Coverage
+## Goals
 - Protocol correctness
 - Error handling
-- Blocking and poll behavior
+- Blocking read and poll behavior
 - mmap lifecycle correctness
-- Session lifecycle correctness (close and reopen)
+- Session lifecycle correctness (close, reopen, multi session isolation)
 
 ## Implementation
-- Python protocol tests
-- C ioctl tests
-- Deterministic replay
+- Python protocol tests in tests/
+- Small C tests for ioctl edge cases when useful
+- Deterministic, hardware independent behavior (no GPU required)
 
-Tests are designed to run without GPU hardware.
+## How to run
+Build and load the module first:
+
+    sudo ./build.sh all
+
+Then run individual steps:
 
 ### Step 16
-Step 17: Run tests/step17_multi_session_interleaved_present_test.py to validate cross session isolation under interleaved presents.
-
-Run:
+Multi session isolation.
 
     sudo python3 tests/step16_multi_session_isolation_test.py
+
+### Step 17
+Interleaved present across two sessions.
+
+    sudo python3 tests/step17_multi_session_interleaved_present_test.py
+
+### Step 18
+Per session resource limits.
+
+    sudo python3 tests/step18_surface_limits_test.py

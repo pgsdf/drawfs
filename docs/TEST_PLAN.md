@@ -1,53 +1,61 @@
 # TEST PLAN
 
-## Goals
-- Verify protocol compliance
-- Ensure robustness against malformed input
-- Guarantee deterministic behavior
+This plan tracks the incremental kernel features validated by the tests in tests/.
 
-## Test Types
-- Unit tests (protocol parsing)
-- Integration tests (kernel + user space)
-- Stress and fuzz testing
+## Step 11: Surface mmap
+- Create a surface
+- Select it for mmap using DRAWFSGIOC_MAP_SURFACE
+- mmap the device and verify read and write works
 
-## Current Focus
-- Step 11 surface mmap correctness
-- Lifetime and cleanup behavior
-- Error propagation
+Test:
+    sudo python3 tests/step11_surface_mmap_test.py
 
-## Step 13: Surface present sequencing
+## Step 12: Surface present
+- Present a surface and receive a SURFACE_PRESENT reply
+- Receive a SURFACE_PRESENTED event with the same cookie
 
-Run:
+Test:
+    sudo python3 tests/step12_surface_present_test.py
 
-```
-sudo python3 tests/step13_present_sequence_test.py
-```
+## Step 13: Present sequencing
+- Validate ordering and event typing
+- Ensure SURFACE_PRESENTED is emitted in the expected sequence
 
-Validates reply and event ordering and cookie roundtrip.
+Test:
+    sudo python3 tests/step13_present_sequence_test.py
 
+## Step 14: Multi surface round robin
+- Create multiple surfaces and present them in a round robin loop
 
-## Step 14: Multi Surface Round Robin Present
+Test:
+    sudo python3 tests/step14_multi_surface_round_robin_test.py
 
-Runs `tests/step14_multi_surface_round_robin_test.py` to validate creating multiple surfaces, writing distinct patterns via MAP_SURFACE plus mmap, and presenting in a round robin sequence while verifying reply and SURFACE_PRESENTED event ordering and cookies.
+## Step 15: Session cleanup and reopen
+- Create and present once
+- Close the fd and ensure session teardown cleans resources
+- Reopen and repeat
 
-## Step 15: Session Cleanup and Reopen
-
-Run:
-
-```
-sudo python3 tests/step15_session_cleanup_reopen_test.py
-```
-
-Validates that drawfs session state is per file descriptor and that close(2)
-cleans up surfaces and mappings. After closing the fd, a new open must not be
-able to map the old surface ID, and the next created surface ID should restart
-from 1 in the new session.
+Test:
+    sudo python3 tests/step15_session_cleanup_reopen_test.py
 
 ## Step 16: Multi session isolation
-Step 17: Multi session interleaved present (two fds presenting in alternating order) plus close and continue on remaining session.
+- Two sessions create their own surfaces
+- Present on each session and ensure events are not cross delivered
 
-Goal: verify that two independent sessions, meaning two open file descriptors, can create, map, and present surfaces without interfering with each other.
+Test:
+    sudo python3 tests/step16_multi_session_isolation_test.py
 
-Test: `tests/step16_multi_session_isolation_test.py`
+## Step 17: Multi session interleaved present
+- Two sessions interleave present operations
+- Validate per session ordering and event isolation
 
-Expected: both sessions receive a `SURFACE_PRESENTED` event with the matching surface id and cookie for that session.
+Test:
+    sudo python3 tests/step17_multi_session_interleaved_present_test.py
+
+## Step 18: Resource limits
+- Repeatedly create surfaces until the per session limit is hit
+- Expect ENOSPC once the limit is exceeded
+- Ensure no fallback to ENOMEM due to swap exhaustion
+
+Test:
+    sudo python3 tests/step18_surface_limits_test.py

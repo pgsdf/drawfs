@@ -1,17 +1,20 @@
-Install/build/load:
+# NOTES
 
-sudo cp -R sys/dev/drawfs /usr/src/sys/dev/
-sudo cp -R sys/modules/drawfs /usr/src/sys/modules/
+Quick workflow for local development on FreeBSD 15.
 
-cd /usr/src/sys/modules/drawfs
-sudo make clean
-sudo make
+## Install, build, load
 
-OBJDIR=$(sudo make -V .OBJDIR)
-sudo kldunload drawfs 2>/dev/null || true
-sudo kldload "$OBJDIR/drawfs.ko"
+From the repository root:
 
-Run test:
+    sudo ./build.sh all
 
-cd /path/to/extracted/step11/tests
-sudo python3 step11_surface_mmap_test.py
+This performs:
+- Install: rsync sources into /usr/src
+- Build: make in /usr/src/sys/modules/drawfs
+- Load: kldload the resulting drawfs.ko and create /dev/draw
+
+## Run a test
+
+Example:
+
+    sudo python3 tests/step11_surface_mmap_test.py
