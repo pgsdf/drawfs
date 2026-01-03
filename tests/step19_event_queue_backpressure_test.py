@@ -175,9 +175,15 @@ def main():
             print("DEBUG: select() says fd is NOT readable - poll isn't seeing the queue!")
 
         # Drain some frames to make space again.
+        # Use select() before each read to avoid blocking
+        import select
         drained = 0
         start = time.time()
         while drained < 200 and (time.time() - start) < 2.0:
+            readable, _, _ = select.select([fd], [], [], 0.5)
+            if fd not in readable:
+                print(f"DEBUG: select returned not readable after draining {drained}")
+                break
             fr = os.read(fd, 4096)
             if not fr:
                 break
