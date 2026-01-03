@@ -1161,9 +1161,13 @@ drawfs_try_process_inbuf(struct drawfs_session *s)
             continue;
         }
 
-        (void)drawfs_process_frame(s, frame, frame_bytes);
+        v = drawfs_process_frame(s, frame, frame_bytes);
         s->stats.frames_processed += 1;
         free(frame, M_DRAWFS);
+
+        /* Propagate backpressure errors to write() caller */
+        if (v != 0)
+            return (v);
     }
 }
 
