@@ -153,6 +153,19 @@ def main():
         stats = get_stats(fd)
         print(f"DEBUG: evq_depth={stats['evq_depth']}, events_enqueued={stats['events_enqueued']}, events_dropped={stats['events_dropped']}")
 
+        # Try non-blocking read first to see what happens
+        import fcntl as fcntl_mod
+        flags = fcntl_mod.fcntl(fd, fcntl_mod.F_GETFL)
+        fcntl_mod.fcntl(fd, fcntl_mod.F_SETFL, flags | os.O_NONBLOCK)
+        try:
+            test_read = os.read(fd, 4096)
+            print(f"DEBUG: non-blocking read got {len(test_read)} bytes")
+        except BlockingIOError:
+            print("DEBUG: non-blocking read returned EAGAIN (queue appears empty to read!)")
+        except Exception as e:
+            print(f"DEBUG: non-blocking read error: {e}")
+        fcntl_mod.fcntl(fd, fcntl_mod.F_SETFL, flags)  # restore
+
         # Drain some frames to make space again.
         drained = 0
         start = time.time()
