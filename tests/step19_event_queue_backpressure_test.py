@@ -15,7 +15,7 @@ Environment
   - Python 3
 """
 
-import os, struct, errno, time
+import os, struct, errno, time, fcntl
 
 DEV = "/dev/draw"
 
@@ -81,6 +81,25 @@ def decode_surface_create(payload: bytes):
 def send(fd: int, frame: bytes):
     os.write(fd, frame)
 
+# Stats ioctl: _IOR('D', 0x01, struct drawfs_stats)
+# FreeBSD _IOR: ((0x40000000) | (((size) & 0x1fff) << 16) | ((group) << 8) | (num))
+# struct drawfs_stats is 8*10 + 4*2 = 88 bytes
+DRAWFSGIOC_STATS = 0x40584401  # _IOR('D', 0x01, 88)
+
+def get_stats(fd: int):
+    buf = bytearray(88)
+    fcntl.ioctl(fd, DRAWFSGIOC_STATS, buf)
+    # Parse: 8 uint64s, 2 uint32s
+    vals = struct.unpack("<QQQQQQQQQII", buf)
+    return {
+        'frames_received': vals[0],
+        'frames_processed': vals[1],
+        'events_enqueued': vals[5],
+        'events_dropped': vals[6],
+        'evq_depth': vals[9],
+        'inbuf_bytes': vals[10],
+    }
+
 def main():
     fd = os.open(DEV, os.O_RDWR)
     try:
@@ -129,6 +148,10 @@ def main():
 
         if not hit:
             raise SystemExit("FAIL: did not hit backpressure limit")
+
+        # Debug: check queue depth before draining
+        stats = get_stats(fd)
+        print(f"DEBUG: evq_depth={stats['evq_depth']}, events_enqueued={stats['events_enqueued']}, events_dropped={stats['events_dropped']}")
 
         # Drain some frames to make space again.
         drained = 0
