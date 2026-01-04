@@ -15,6 +15,21 @@ The kernel implements mechanism only.
 
 Everything else belongs in user space.
 
+## Source Files
+
+The kernel module is split across multiple files for maintainability:
+
+| File | Description |
+|------|-------------|
+| `drawfs.c` | Device operations (cdevsw), session lifecycle, message dispatch |
+| `drawfs_surface.c` | Surface create/destroy/lookup, mmap backing store |
+| `drawfs_frame.c` | Frame/message validation and building |
+| `drawfs_internal.h` | Shared struct definitions (session, surface, event) |
+| `drawfs_surface.h` | Surface API prototypes |
+| `drawfs_frame.h` | Frame API prototypes |
+| `drawfs.h` | Public constants (device name, limits) |
+| `drawfs_proto.h` | Protocol structs and message types |
+
 ## Device model
 
 `/dev/draw` is a character device.
@@ -47,19 +62,24 @@ The kernel module uses the following cdevsw hooks.
 
 Each session owns a mutex `s->lock`.
 
-The session lock protects.
+The session lock protects:
 
-* Input buffer state
-* Reply event queue
-* Display state (active display id and handle state)
-* Surface list and ids
-* `map_surface_id` selection used for `mmap`
+* Event queue (`evq`, `evq_bytes`)
+* Session state (`closing` flag, `active_display_*`, `map_surface_id`)
+* Input buffer (`inbuf`, `in_len`, `in_cap`)
+* Statistics counters (`stats.*`)
+* Condition variable and select info (`cv`, `sel`)
+* Surface list (`surfaces`, `surfaces_count`, `surfaces_bytes`)
 
-Locking rules.
+Locking rules:
 
-* Hold the session lock when reading or writing any session fields above.
-* Do not sleep while holding the lock unless required by kernel primitives that are safe under the lock.
-* Keep protocol processing small and bounded.
+* Never hold `s->lock` while calling `malloc()` with `M_WAITOK`
+* Never hold `s->lock` when calling `vm_pager_allocate` or `vm_object_deallocate`
+* Device callbacks (`d_open`, `d_close`, `d_read`, `d_write`, `d_poll`) acquire lock as needed
+* Helper functions document whether they acquire lock or expect caller to hold it
+* Keep protocol processing small and bounded
+
+See the locking comments in `drawfs.c` and `drawfs_surface.c` for per-function documentation.
 
 ## Readiness semantics
 

@@ -68,6 +68,45 @@ with DrawSession() as s:
     ev_sid, ev_reserved, ev_cookie = s.read_presented_event()
 ```
 
+## Debug Tool
+
+The `tests/drawfs_dump.py` tool decodes raw frame data for debugging protocol issues:
+
+```sh
+# Decode hex-encoded frame from command line
+./tests/drawfs_dump.py 44525731000110002c00000001000000...
+
+# Decode binary frame from stdin
+cat frame.bin | ./tests/drawfs_dump.py
+
+# Decode hex from stdin
+echo "44525731..." | ./tests/drawfs_dump.py --hex
+
+# Live capture from device (requires root)
+sudo ./tests/drawfs_dump.py --live --count 5
+```
+
+Example output:
+```
+=== Frame 1 (56 bytes) ===
+
+Frame Header:
+  magic:        0x31575244 ('DRW1') [OK]
+  version:      0x0100 (1.0)
+  header_bytes: 16
+  frame_bytes:  56
+  frame_id:     2
+
+Message 1:
+  offset:     16
+  msg_type:   0x8010 (RPL_DISPLAY_LIST)
+  msg_bytes:  40
+  msg_id:     202
+  payload (24 bytes):
+    display_count: 1
+      display[0]: id=1 1920x1080 @ 60.0Hz flags=0x0
+```
+
 ## Test Steps
 
 ### Step 6: Multi-message and Poll

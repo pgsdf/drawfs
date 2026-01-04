@@ -30,8 +30,13 @@ The `test` action runs the current end to end tests in `tests/`.
 ## Repository layout
 
 - `sys/dev/drawfs/` kernel device implementation
+  - `drawfs.c` - device operations, session lifecycle, message dispatch
+  - `drawfs_surface.c` - surface management, mmap backing
+  - `drawfs_frame.c` - frame validation and building
 - `sys/modules/drawfs/` kmod build glue
 - `tests/` python and C tests (step based)
+  - `drawfs_test.py` - shared test helpers and protocol encoding
+  - `drawfs_dump.py` - debug tool for decoding raw frames
 - `docs/` design and protocol documentation
 
 ## License
