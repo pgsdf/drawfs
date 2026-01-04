@@ -32,9 +32,9 @@
 ### Remaining optional work
 
 1. Code quality
-   - Split protocol and validation logic into a dedicated C file to keep drawfs.c smaller
-   - Run a consistent formatting pass (tabs for indentation, no mixed brace styles)
-   - Add additional assertions and comments around locking rules
+   - [x] Split protocol and validation logic into dedicated C files (drawfs_frame.c, drawfs_surface.c)
+   - [x] Verified consistent formatting (tabs for indentation, BSD brace style)
+   - [x] Added locking rule comments to drawfs.c and drawfs_surface.c
 
 2. Security posture
    - Consider making the device node permissions and group ownership configurable
