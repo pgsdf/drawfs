@@ -260,17 +260,22 @@ def surface_present(
     surface_id: int,
     cookie: int = 0,
     frame_id: int = 6,
-    msg_id: int = 6
+    msg_id: int = 6,
+    skip_events: bool = False
 ) -> Tuple[int, int, int]:
     """
     Send SURFACE_PRESENT and read reply (not event).
     Returns (status, surface_id, cookie) from reply.
+    If skip_events=True, uses drain_until to skip any pending events.
     """
     payload = struct.pack("<IIQ", surface_id, 0, cookie)
     send(fd, make_frame(frame_id, [make_msg(REQ_SURFACE_PRESENT, msg_id, payload)]))
-    mt, mid, reply_payload = read_msg(fd)
-    if mt != RPL_SURFACE_PRESENT:
-        raise RuntimeError(f"Expected SURFACE_PRESENT reply, got 0x{mt:04x}")
+    if skip_events:
+        _, reply_payload = drain_until(fd, RPL_SURFACE_PRESENT)
+    else:
+        mt, mid, reply_payload = read_msg(fd)
+        if mt != RPL_SURFACE_PRESENT:
+            raise RuntimeError(f"Expected SURFACE_PRESENT reply, got 0x{mt:04x}")
     status, sid, cookie_out = struct.unpack_from("<iIQ", reply_payload, 0)
     return status, sid, cookie_out
 
@@ -417,9 +422,9 @@ class DrawSession:
         fid, mid = self._next_ids()
         return surface_destroy(self.fd, surface_id, fid, mid, skip_events)
 
-    def surface_present(self, surface_id: int, cookie: int = 0) -> Tuple[int, int, int]:
+    def surface_present(self, surface_id: int, cookie: int = 0, skip_events: bool = False) -> Tuple[int, int, int]:
         fid, mid = self._next_ids()
-        return surface_present(self.fd, surface_id, cookie, fid, mid)
+        return surface_present(self.fd, surface_id, cookie, fid, mid, skip_events)
 
     def read_presented_event(self, timeout_ms: int = 2000) -> Tuple[int, int, int]:
         return read_presented_event(self.fd, timeout_ms)

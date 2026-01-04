@@ -80,9 +80,9 @@ class SessionWorker:
                         self.results['destroyed'] += 1
 
                 elif surfaces:
-                    # Present
+                    # Present (skip_events=True to handle pending events)
                     sid = random.choice(surfaces)
-                    status, _, _ = s.surface_present(sid, i)
+                    status, _, _ = s.surface_present(sid, i, skip_events=True)
                     if status == 0:
                         self.results['presented'] += 1
 
@@ -144,7 +144,7 @@ def stress_session_churn(iterations: int, verbose: bool = False):
                 # Create a surface and present once
                 status, sid, _, _ = s.surface_create(64, 64, skip_events=True)
                 if status == 0:
-                    s.surface_present(sid, i)
+                    s.surface_present(sid, i, skip_events=True)
                     s.drain_all(max_msgs=5, timeout_s=0.05)
                     s.surface_destroy(sid, skip_events=True)
         except Exception as e:
@@ -205,7 +205,7 @@ def stress_interleaved_sessions(num_sessions: int, iterations: int, verbose: boo
 
             elif surfs:
                 sid = random.choice(surfs)
-                status, _, _ = s.surface_present(sid, i)
+                status, _, _ = s.surface_present(sid, i, skip_events=True)
                 if status == 0:
                     ops['present'] += 1
                 else:
