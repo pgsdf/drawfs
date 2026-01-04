@@ -1,4 +1,9 @@
 #ifndef _DEV_DRAWFS_DRAWFS_IOCTL_H_
+#ifdef _KERNEL
+#include <sys/stdint.h>
+#else
+#include <stdint.h>
+#endif
 #define _DEV_DRAWFS_DRAWFS_IOCTL_H_
 
 #include <sys/ioccom.h>
@@ -36,6 +41,18 @@ struct drawfs_map_surface_rep {
     uint32_t bytes_total;
 };
 
-#define DRAWFSGIOC_MAP_SURFACE _IOWR('D', 0x02, struct drawfs_map_surface_rep)
+
+/*
+ * Step 11: select a surface for mmap on this file descriptor.
+ * Caller sets surface_id. Kernel fills status, stride_bytes, bytes_total.
+ */
+struct drawfs_map_surface {
+    int32_t  status;
+    uint32_t surface_id;
+    uint32_t stride_bytes;
+    uint32_t bytes_total;
+};
+
+#define DRAWFSGIOC_MAP_SURFACE _IOWR('D', 0x02, struct drawfs_map_surface)
 
 #endif
