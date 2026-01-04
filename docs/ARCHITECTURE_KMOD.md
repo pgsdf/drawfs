@@ -131,6 +131,16 @@ The module exposes tunable parameters under `hw.drawfs`:
 Device permission sysctls are applied at module load time via `loader.conf`.
 All other sysctls can be changed at runtime and affect new operations.
 
+### Debug
+
+| Sysctl | Type | Description |
+|--------|------|-------------|
+| `hw.drawfs.vmobj_allocs` | read-only | Total vm_object allocations (cumulative) |
+| `hw.drawfs.vmobj_deallocs` | read-only | Total vm_object deallocations (cumulative) |
+
+These counters track global vm_object lifecycle for leak detection.
+`vmobj_allocs - vmobj_deallocs` should equal zero after all sessions close.
+
 See `docs/SECURITY.md` for configuration examples.
 
 ## Error semantics

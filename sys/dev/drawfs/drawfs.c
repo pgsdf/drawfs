@@ -90,6 +90,23 @@ SYSCTL_INT(_hw_drawfs, OID_AUTO, coalesce_events, CTLFLAG_RW,
     "Coalesce repeated SURFACE_PRESENTED events (1=enabled, 0=disabled)");
 
 /*
+ * Debug counters for vm_object lifecycle tracking.
+ *
+ * These read-only counters track global vm_object allocations and
+ * deallocations across all sessions. Useful for detecting leaks:
+ * vmobj_allocs - vmobj_deallocs should equal zero after all sessions close.
+ */
+volatile u_int drawfs_vmobj_allocs = 0;
+SYSCTL_UINT(_hw_drawfs, OID_AUTO, vmobj_allocs, CTLFLAG_RD,
+    __DEVOLATILE(u_int *, &drawfs_vmobj_allocs), 0,
+    "Total vm_object allocations (debug)");
+
+volatile u_int drawfs_vmobj_deallocs = 0;
+SYSCTL_UINT(_hw_drawfs, OID_AUTO, vmobj_deallocs, CTLFLAG_RD,
+    __DEVOLATILE(u_int *, &drawfs_vmobj_deallocs), 0,
+    "Total vm_object deallocations (debug)");
+
+/*
  * Locking model:
  *
  * Each session has a mutex (s->lock) that protects:
