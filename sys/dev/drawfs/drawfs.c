@@ -444,7 +444,7 @@ drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id,
     if (s->surfaces_count >= DRAWFS_MAX_SURFACES ||
         s->surfaces_bytes + total64 > DRAWFS_MAX_SESSION_SURFACE_BYTES) {
         mtx_unlock(&s->lock);
-        rep.status = ENOMEM;
+        rep.status = ENOSPC;
         free(sf, M_DRAWFS);
         sf = NULL;
         goto send_reply;
