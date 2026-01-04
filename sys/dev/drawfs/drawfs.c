@@ -182,6 +182,9 @@ static int drawfs_process_frame(struct drawfs_session *s, const uint8_t *buf, si
 static int drawfs_ingest_bytes(struct drawfs_session *s, const uint8_t *buf, size_t n);
 static int drawfs_try_process_inbuf(struct drawfs_session *s);
 
+static int drawfs_send_reply(struct drawfs_session *s, uint16_t msg_type,
+    uint32_t msg_id, const void *payload, size_t payload_len);
+
 static struct cdev *drawfs_dev;
 
 static struct cdevsw drawfs_cdevsw = {
@@ -244,7 +247,7 @@ drawfs_reply_surface_destroy(struct drawfs_session *s, uint32_t msg_id,
 
     if (payload_len < sizeof(req)) {
         rep.status = EINVAL;
-        goto build_reply;
+        goto send_reply;
     }
 
     memcpy(&req, payload, sizeof(req));
@@ -252,7 +255,7 @@ drawfs_reply_surface_destroy(struct drawfs_session *s, uint32_t msg_id,
 
     if (req.surface_id == 0) {
         rep.status = EINVAL;
-        goto build_reply;
+        goto send_reply;
     }
 
     /* Detach from session list under lock */
@@ -281,7 +284,7 @@ drawfs_reply_surface_destroy(struct drawfs_session *s, uint32_t msg_id,
 
     if (sf == NULL) {
         rep.status = ENOENT;
-        goto build_reply;
+        goto send_reply;
     }
 
     /* Release backing VM object, if any */
@@ -292,44 +295,8 @@ drawfs_reply_surface_destroy(struct drawfs_session *s, uint32_t msg_id,
 
     free(sf, M_DRAWFS);
 
-build_reply:
-    {
-        uint32_t payload_bytes;
-        uint32_t msg_bytes;
-        uint32_t msg_bytes_aligned;
-        uint32_t frame_bytes;
-
-        uint8_t *out;
-        struct drawfs_frame_hdr fh;
-        struct drawfs_msg_hdr mh;
-
-        payload_bytes = (uint32_t)sizeof(rep);
-        msg_bytes = (uint32_t)sizeof(struct drawfs_msg_hdr) + payload_bytes;
-        msg_bytes_aligned = drawfs_align4(msg_bytes);
-        frame_bytes = (uint32_t)sizeof(struct drawfs_frame_hdr) + msg_bytes_aligned;
-
-        out = malloc(frame_bytes, M_DRAWFS, M_WAITOK | M_ZERO);
-
-        fh.magic = DRAWFS_MAGIC;
-        fh.version = DRAWFS_VERSION;
-        fh.header_bytes = (uint16_t)sizeof(struct drawfs_frame_hdr);
-        fh.frame_bytes = frame_bytes;
-        fh.frame_id = s->next_out_frame_id++;
-
-        mh.msg_type = DRAWFS_RPL_SURFACE_DESTROY;
-        mh.msg_flags = 0;
-        mh.msg_bytes = msg_bytes;
-        mh.msg_id = msg_id;
-        mh.reserved = 0;
-
-        memcpy(out, &fh, sizeof(fh));
-        memcpy(out + sizeof(fh), &mh, sizeof(mh));
-        memcpy(out + sizeof(fh) + sizeof(mh), &rep, sizeof(rep));
-
-        int err = drawfs_enqueue_event(s, out, frame_bytes);
-        free(out, M_DRAWFS);
-        return (err);
-    }
+send_reply:
+    return drawfs_send_reply(s, DRAWFS_RPL_SURFACE_DESTROY, msg_id, &rep, sizeof(rep));
 }
 
 /*
@@ -347,36 +314,23 @@ drawfs_reply_surface_present(struct drawfs_session *s, uint32_t msg_id,
         uint64_t cookie;
     } __packed req12;
     struct drawfs_surface *surf;
+    struct drawfs_rpl_surface_present rep;
+    struct drawfs_evt_surface_presented evt;
     uint32_t surface_id;
     uint64_t cookie;
+    int err;
 
-    /* Reply buffer */
-    struct {
-        struct drawfs_frame_hdr fh;
-        struct drawfs_msg_hdr   mh;
-        struct drawfs_rpl_surface_present pl;
-    } __packed out;
-
-    /* Event buffer */
-    struct {
-        struct drawfs_frame_hdr fh;
-        struct drawfs_msg_hdr   mh;
-        struct drawfs_evt_surface_presented pl;
-    } __packed ev;
-
-    bzero(&out, sizeof(out));
-    bzero(&ev, sizeof(ev));
+    bzero(&rep, sizeof(rep));
+    bzero(&req, sizeof(req));
+    bzero(&req12, sizeof(req12));
+    surface_id = 0;
+    cookie = 0;
 
     /*
      * Accept two encodings for SURFACE_PRESENT payload:
      *   - 16 bytes: { uint32 surface_id, uint32 rsv, uint64 cookie }
      *   - 12 bytes: { uint32 surface_id, uint64 cookie } (legacy tests)
      */
-    bzero(&req, sizeof(req));
-    bzero(&req12, sizeof(req12));
-    surface_id = 0;
-    cookie = 0;
-
     if (payload_len >= sizeof(req)) {
         bcopy(payload, &req, sizeof(req));
         surface_id = req.surface_id;
@@ -386,74 +340,46 @@ drawfs_reply_surface_present(struct drawfs_session *s, uint32_t msg_id,
         surface_id = req12.surface_id;
         cookie = req12.cookie;
     } else {
-        out.pl.status = EINVAL;
-        out.pl.surface_id = 0;
-        out.pl.cookie = 0;
-        goto send_reply_only;
+        rep.status = EINVAL;
+        rep.surface_id = 0;
+        rep.cookie = 0;
+        goto send_reply;
     }
 
     if ((s->active_display_id == 0 && s->active_display_handle == 0) || surface_id == 0) {
-        out.pl.status = EINVAL;
-        out.pl.surface_id = 0;
-        out.pl.cookie = cookie;
-        goto send_reply_only;
+        rep.status = EINVAL;
+        rep.surface_id = 0;
+        rep.cookie = cookie;
+        goto send_reply;
     }
 
     surf = drawfs_surface_lookup(s, surface_id);
     if (surf == NULL) {
-        out.pl.status = ENOENT;
-        out.pl.surface_id = 0;
-        out.pl.cookie = cookie;
-        goto send_reply_only;
+        rep.status = ENOENT;
+        rep.surface_id = 0;
+        rep.cookie = cookie;
+        goto send_reply;
     }
 
     /* Success */
-    out.pl.status = 0;
-    out.pl.surface_id = surface_id;
-    out.pl.cookie = cookie;
+    rep.status = 0;
+    rep.surface_id = surface_id;
+    rep.cookie = cookie;
 
-    /* Build and enqueue reply */
-send_reply_only:
-    out.fh.magic = DRAWFS_MAGIC;
-    out.fh.version = DRAWFS_VERSION;
-    out.fh.header_bytes = (uint16_t)sizeof(struct drawfs_frame_hdr);
-    out.fh.frame_bytes = (uint32_t)sizeof(out);
-    out.fh.frame_id = 0;
-
-    out.mh.msg_type = DRAWFS_RPL_SURFACE_PRESENT;
-    out.mh.msg_flags = 0;
-    out.mh.msg_bytes = (uint32_t)sizeof(struct drawfs_msg_hdr) + (uint32_t)sizeof(out.pl);
-    out.mh.msg_id = msg_id;
-    out.mh.reserved = 0;
-
-    {
-		int e;
-		e = drawfs_enqueue_event(s, &out, sizeof(out));
-		if (e != 0)
-			return (e);
-	}
+send_reply:
+    err = drawfs_send_reply(s, DRAWFS_RPL_SURFACE_PRESENT, msg_id, &rep, sizeof(rep));
+    if (err != 0)
+        return (err);
 
     /* Only emit the async "presented" event on success. */
-    if (out.pl.status != 0)
+    if (rep.status != 0)
         return (0);
 
-    ev.fh.magic = DRAWFS_MAGIC;
-    ev.fh.version = DRAWFS_VERSION;
-    ev.fh.header_bytes = (uint16_t)sizeof(struct drawfs_frame_hdr);
-    ev.fh.frame_bytes = (uint32_t)sizeof(ev);
-    ev.fh.frame_id = 0;
+    evt.surface_id = surface_id;
+    evt.reserved = 0;
+    evt.cookie = cookie;
 
-    ev.mh.msg_type = DRAWFS_EVT_SURFACE_PRESENTED;
-    ev.mh.msg_flags = 0;
-    ev.mh.msg_bytes = (uint32_t)sizeof(struct drawfs_msg_hdr) + (uint32_t)sizeof(ev.pl);
-    ev.mh.msg_id = 0;
-    ev.mh.reserved = 0;
-
-    ev.pl.surface_id = surface_id;
-    ev.pl.reserved = 0;
-    ev.pl.cookie = cookie;
-
-    (void)drawfs_enqueue_event(s, &ev, sizeof(ev));
+    (void)drawfs_send_reply(s, DRAWFS_EVT_SURFACE_PRESENTED, 0, &evt, sizeof(evt));
 
     return (0);
 }
@@ -483,24 +409,24 @@ drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id,
     /* Must bind a display first. */
     if (s->active_display_id == 0) {
         rep.status = EINVAL;
-        goto build_reply;
+        goto send_reply;
     }
 
     if (payload_len < sizeof(req)) {
         rep.status = EINVAL;
-        goto build_reply;
+        goto send_reply;
     }
 
     memcpy(&req, payload, sizeof(req));
 
     if (req.width_px == 0 || req.height_px == 0) {
         rep.status = EINVAL;
-        goto build_reply;
+        goto send_reply;
     }
 
     if (req.format != DRAWFS_FMT_XRGB8888) {
         rep.status = EPROTONOSUPPORT;
-        goto build_reply;
+        goto send_reply;
     }
 
     /* Step 18 hardening: compute size in 64-bit and clamp. */
@@ -508,7 +434,7 @@ drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id,
     total64 = stride64 * (uint64_t)req.height_px;
     if (stride64 == 0 || total64 == 0 || total64 > DRAWFS_MAX_SURFACE_BYTES) {
         rep.status = EFBIG;
-        goto build_reply;
+        goto send_reply;
     }
 
     /* Allocate and record a semantic surface object. */
@@ -521,7 +447,7 @@ drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id,
         rep.status = ENOMEM;
         free(sf, M_DRAWFS);
         sf = NULL;
-        goto build_reply;
+        goto send_reply;
     }
 
     sf->id = s->next_surface_id++;
@@ -541,44 +467,8 @@ drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id,
     rep.bytes_total = sf->bytes_total;
     mtx_unlock(&s->lock);
 
-build_reply:
-    {
-        uint32_t payload_bytes;
-        uint32_t msg_bytes;
-        uint32_t msg_bytes_aligned;
-        uint32_t frame_bytes;
-
-        uint8_t *out;
-        struct drawfs_frame_hdr fh;
-        struct drawfs_msg_hdr mh;
-
-        payload_bytes = (uint32_t)sizeof(rep);
-        msg_bytes = (uint32_t)sizeof(struct drawfs_msg_hdr) + payload_bytes;
-        msg_bytes_aligned = drawfs_align4(msg_bytes);
-        frame_bytes = (uint32_t)sizeof(struct drawfs_frame_hdr) + msg_bytes_aligned;
-
-        out = malloc(frame_bytes, M_DRAWFS, M_WAITOK | M_ZERO);
-
-        fh.magic = DRAWFS_MAGIC;
-        fh.version = DRAWFS_VERSION;
-        fh.header_bytes = (uint16_t)sizeof(struct drawfs_frame_hdr);
-        fh.frame_bytes = frame_bytes;
-        fh.frame_id = s->next_out_frame_id++;
-
-        mh.msg_type = DRAWFS_RPL_SURFACE_CREATE;
-        mh.msg_flags = 0;
-        mh.msg_bytes = msg_bytes;
-        mh.msg_id = msg_id;
-        mh.reserved = 0;
-
-        memcpy(out, &fh, sizeof(fh));
-        memcpy(out + sizeof(fh), &mh, sizeof(mh));
-        memcpy(out + sizeof(fh) + sizeof(mh), &rep, sizeof(rep));
-
-        int err = drawfs_enqueue_event(s, out, frame_bytes);
-        free(out, M_DRAWFS);
-        return (err);
-    }
+send_reply:
+    return drawfs_send_reply(s, DRAWFS_RPL_SURFACE_CREATE, msg_id, &rep, sizeof(rep));
 }
 
 static void
@@ -630,8 +520,7 @@ drawfs_reply_display_open(struct drawfs_session *s, uint32_t msg_id, const uint8
 
     if (payload_len < sizeof(req)) {
         rep.status = EINVAL;
-        /* fallthrough to reply build */
-        goto build_reply;
+        goto send_reply;
     }
 
     memcpy(&req, payload, sizeof(req));
@@ -639,7 +528,7 @@ drawfs_reply_display_open(struct drawfs_session *s, uint32_t msg_id, const uint8
     /* Validate display_id against current stub list (Step 8). */
     if (req.display_id != 1) {
         rep.status = ENODEV;
-        goto build_reply;
+        goto send_reply;
     }
 
     /* Bind session to display. */
@@ -651,45 +540,8 @@ drawfs_reply_display_open(struct drawfs_session *s, uint32_t msg_id, const uint8
     rep.active_display_id = s->active_display_id;
     mtx_unlock(&s->lock);
 
-build_reply:
-    {
-        /* Build reply frame with payload rep. */
-        uint32_t payload_bytes;
-        uint32_t msg_bytes;
-        uint32_t msg_bytes_aligned;
-        uint32_t frame_bytes;
-
-        uint8_t *out;
-        struct drawfs_frame_hdr fh;
-        struct drawfs_msg_hdr mh;
-
-        payload_bytes = (uint32_t)sizeof(rep);
-        msg_bytes = (uint32_t)sizeof(struct drawfs_msg_hdr) + payload_bytes;
-        msg_bytes_aligned = drawfs_align4(msg_bytes);
-        frame_bytes = (uint32_t)sizeof(struct drawfs_frame_hdr) + msg_bytes_aligned;
-
-        out = malloc(frame_bytes, M_DRAWFS, M_WAITOK | M_ZERO);
-
-        fh.magic = DRAWFS_MAGIC;
-        fh.version = DRAWFS_VERSION;
-        fh.header_bytes = (uint16_t)sizeof(struct drawfs_frame_hdr);
-        fh.frame_bytes = frame_bytes;
-        fh.frame_id = s->next_out_frame_id++;
-
-        mh.msg_type = DRAWFS_RPL_DISPLAY_OPEN;
-        mh.msg_flags = 0;
-        mh.msg_bytes = msg_bytes;
-        mh.msg_id = msg_id;
-        mh.reserved = 0;
-
-        memcpy(out, &fh, sizeof(fh));
-        memcpy(out + sizeof(fh), &mh, sizeof(mh));
-        memcpy(out + sizeof(fh) + sizeof(mh), &rep, sizeof(rep));
-
-        int err = drawfs_enqueue_event(s, out, frame_bytes);
-        free(out, M_DRAWFS);
-        return (err);
-    }
+send_reply:
+    return drawfs_send_reply(s, DRAWFS_RPL_DISPLAY_OPEN, msg_id, &rep, sizeof(rep));
 }
 
 static int
@@ -1283,92 +1135,79 @@ drawfs_process_frame(struct drawfs_session *s, const uint8_t *buf, size_t n)
     return (0);
 }
 
+/*
+ * Helper to build and enqueue a reply frame.
+ * Handles frame header, message header, payload copying, alignment, and enqueue.
+ */
 static int
-drawfs_reply_ok(struct drawfs_session *s, uint32_t msg_id)
+drawfs_send_reply(struct drawfs_session *s, uint16_t msg_type,
+    uint32_t msg_id, const void *payload, size_t payload_len)
 {
-    uint8_t out[sizeof(struct drawfs_frame_hdr) + sizeof(struct drawfs_msg_hdr)];
     struct drawfs_frame_hdr fh;
     struct drawfs_msg_hdr mh;
+    uint32_t msg_bytes;
+    uint32_t msg_bytes_aligned;
+    uint32_t frame_bytes;
+    uint8_t *out;
+    int err;
+
+    msg_bytes = (uint32_t)(sizeof(struct drawfs_msg_hdr) + payload_len);
+    msg_bytes_aligned = drawfs_align4(msg_bytes);
+    frame_bytes = (uint32_t)sizeof(struct drawfs_frame_hdr) + msg_bytes_aligned;
+
+    out = malloc(frame_bytes, M_DRAWFS, M_WAITOK | M_ZERO);
 
     fh.magic = DRAWFS_MAGIC;
     fh.version = DRAWFS_VERSION;
     fh.header_bytes = (uint16_t)sizeof(struct drawfs_frame_hdr);
-    fh.frame_bytes = (uint32_t)sizeof(out);
+    fh.frame_bytes = frame_bytes;
     fh.frame_id = s->next_out_frame_id++;
 
-    mh.msg_type = DRAWFS_RPL_OK;
+    mh.msg_type = msg_type;
     mh.msg_flags = 0;
-    mh.msg_bytes = (uint32_t)sizeof(struct drawfs_msg_hdr);
+    mh.msg_bytes = msg_bytes;
     mh.msg_id = msg_id;
     mh.reserved = 0;
 
     memcpy(out, &fh, sizeof(fh));
     memcpy(out + sizeof(fh), &mh, sizeof(mh));
+    if (payload != NULL && payload_len > 0)
+        memcpy(out + sizeof(fh) + sizeof(mh), payload, payload_len);
 
-    return drawfs_enqueue_event(s, out, sizeof(out));
+    err = drawfs_enqueue_event(s, out, frame_bytes);
+    free(out, M_DRAWFS);
+    return (err);
+}
+
+static int
+drawfs_reply_ok(struct drawfs_session *s, uint32_t msg_id)
+{
+    return drawfs_send_reply(s, DRAWFS_RPL_OK, msg_id, NULL, 0);
 }
 
 static int
 drawfs_reply_error(struct drawfs_session *s, uint32_t msg_id, uint32_t err_code, uint32_t err_offset)
 {
-    uint8_t out[sizeof(struct drawfs_frame_hdr) + sizeof(struct drawfs_msg_hdr) + sizeof(struct drawfs_rpl_error)];
-    struct drawfs_frame_hdr fh;
-    struct drawfs_msg_hdr mh;
     struct drawfs_rpl_error ep;
-
-    fh.magic = DRAWFS_MAGIC;
-    fh.version = DRAWFS_VERSION;
-    fh.header_bytes = (uint16_t)sizeof(struct drawfs_frame_hdr);
-    fh.frame_bytes = (uint32_t)sizeof(out);
-    fh.frame_id = s->next_out_frame_id++;
-
-    mh.msg_type = DRAWFS_RPL_ERROR;
-    mh.msg_flags = 0;
-    mh.msg_bytes = (uint32_t)(sizeof(struct drawfs_msg_hdr) + sizeof(struct drawfs_rpl_error));
-    mh.msg_id = msg_id;
-    mh.reserved = 0;
 
     ep.err_code = err_code;
     ep.err_detail = 0;
     ep.err_offset = err_offset;
 
-    memcpy(out, &fh, sizeof(fh));
-    memcpy(out + sizeof(fh), &mh, sizeof(mh));
-    memcpy(out + sizeof(fh) + sizeof(mh), &ep, sizeof(ep));
-
-    return drawfs_enqueue_event(s, out, sizeof(out));
+    return drawfs_send_reply(s, DRAWFS_RPL_ERROR, msg_id, &ep, sizeof(ep));
 }
 
 static int
 drawfs_reply_hello(struct drawfs_session *s, uint32_t msg_id)
 {
-    uint8_t out[sizeof(struct drawfs_frame_hdr) + sizeof(struct drawfs_msg_hdr) + sizeof(struct drawfs_rpl_hello)];
-    struct drawfs_frame_hdr fh;
-    struct drawfs_msg_hdr mh;
     struct drawfs_rpl_hello hp;
-
-    fh.magic = DRAWFS_MAGIC;
-    fh.version = DRAWFS_VERSION;
-    fh.header_bytes = (uint16_t)sizeof(struct drawfs_frame_hdr);
-    fh.frame_bytes = (uint32_t)sizeof(out);
-    fh.frame_id = s->next_out_frame_id++;
-
-    mh.msg_type = DRAWFS_RPL_HELLO;
-    mh.msg_flags = 0;
-    mh.msg_bytes = (uint32_t)(sizeof(struct drawfs_msg_hdr) + sizeof(struct drawfs_rpl_hello));
-    mh.msg_id = msg_id;
-    mh.reserved = 0;
 
     hp.server_major = 1;
     hp.server_minor = 0;
     hp.server_flags = 0;
     hp.caps_bytes = 0;
 
-    memcpy(out, &fh, sizeof(fh));
-    memcpy(out + sizeof(fh), &mh, sizeof(mh));
-    memcpy(out + sizeof(fh) + sizeof(mh), &hp, sizeof(hp));
-
-    return drawfs_enqueue_event(s, out, sizeof(out));
+    return drawfs_send_reply(s, DRAWFS_RPL_HELLO, msg_id, &hp, sizeof(hp));
 }
 
 static int
@@ -1382,54 +1221,20 @@ drawfs_reply_display_list(struct drawfs_session *s, uint32_t msg_id)
      *
      * This will later be backed by DRM/KMS enumeration.
      */
-    const uint32_t count = 1;
-    struct drawfs_display_desc desc;
+    struct {
+        uint32_t count;
+        struct drawfs_display_desc desc;
+    } payload;
 
-    desc.display_id = 1;
-    desc.width_px = 1920;
-    desc.height_px = 1080;
-    desc.refresh_mhz = 60000;
-    desc.flags = 0;
+    payload.count = 1;
+    payload.desc.display_id = 1;
+    payload.desc.width_px = 1920;
+    payload.desc.height_px = 1080;
+    payload.desc.refresh_mhz = 60000;
+    payload.desc.flags = 0;
 
-    /* Build payload: count + desc[count]. */
-    const uint32_t payload_bytes = (uint32_t)(sizeof(count) + sizeof(desc));
-
-    /* Message bytes include header, payload is 4-byte aligned. */
-    const uint32_t msg_bytes = (uint32_t)sizeof(struct drawfs_msg_hdr) + payload_bytes;
-    const uint32_t msg_bytes_aligned = drawfs_align4(msg_bytes);
-
-    /* Frame bytes include frame header + aligned message. */
-    const uint32_t frame_bytes = (uint32_t)sizeof(struct drawfs_frame_hdr) + msg_bytes_aligned;
-
-    uint8_t *out = malloc(frame_bytes, M_DRAWFS, M_WAITOK | M_ZERO);
-    struct drawfs_frame_hdr fh;
-    struct drawfs_msg_hdr mh;
-
-    fh.magic = DRAWFS_MAGIC;
-    fh.version = DRAWFS_VERSION;
-    fh.header_bytes = (uint16_t)sizeof(struct drawfs_frame_hdr);
-    fh.frame_bytes = frame_bytes;
-    fh.frame_id = s->next_out_frame_id++;
-
-    mh.msg_type = DRAWFS_RPL_DISPLAY_LIST;
-    mh.msg_flags = 0;
-    mh.msg_bytes = msg_bytes;
-    mh.msg_id = msg_id;
-    mh.reserved = 0;
-
-    memcpy(out, &fh, sizeof(fh));
-    memcpy(out + sizeof(fh), &mh, sizeof(mh));
-
-    /* Payload immediately after msg header */
-    uint8_t *p = out + sizeof(fh) + sizeof(mh);
-    memcpy(p, &count, sizeof(count));
-    memcpy(p + sizeof(count), &desc, sizeof(desc));
-
-    /* Remaining padding is already zero due to M_ZERO. */
-
-    int err = drawfs_enqueue_event(s, out, frame_bytes);
-    free(out, M_DRAWFS);
-    return (err);
+    return drawfs_send_reply(s, DRAWFS_RPL_DISPLAY_LIST, msg_id,
+        &payload, sizeof(payload));
 }
 
 
