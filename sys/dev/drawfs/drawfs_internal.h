@@ -26,6 +26,12 @@ extern long drawfs_max_surface_bytes;
 extern long drawfs_max_session_surface_bytes;
 
 /*
+ * Debug counters for vm_object lifecycle tracking (defined in drawfs.c).
+ */
+extern volatile u_int drawfs_vmobj_allocs;
+extern volatile u_int drawfs_vmobj_deallocs;
+
+/*
  * Event queue entry for outbound frames (replies and async events).
  */
 struct drawfs_event {

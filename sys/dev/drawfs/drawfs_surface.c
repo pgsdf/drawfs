@@ -18,6 +18,7 @@
 #include <sys/rwlock.h>
 #include <sys/pctrie.h>
 #include <sys/mutex.h>
+#include <machine/atomic.h>
 #include <vm/vm.h>
 #include <vm/vm_param.h>
 #include <vm/vm_page.h>
@@ -164,6 +165,7 @@ drawfs_surface_destroy(struct drawfs_session *s, uint32_t surface_id)
 
     /* Release backing VM object, if any. */
     if (sf->vmobj != NULL) {
+        atomic_add_int(&drawfs_vmobj_deallocs, 1);
         vm_object_deallocate(sf->vmobj);
         sf->vmobj = NULL;
     }
@@ -252,6 +254,7 @@ drawfs_surface_get_vmobj(struct drawfs_session *s, vm_size_t size,
             return (NULL);
         }
         sf->vmobj = obj;
+        atomic_add_int(&drawfs_vmobj_allocs, 1);
     }
 
     vm_object_reference(sf->vmobj);
@@ -283,8 +286,10 @@ drawfs_surfaces_free_all(struct drawfs_session *s)
 
         vmobj = sf->vmobj;
         sf->vmobj = NULL;
-        if (vmobj != NULL)
+        if (vmobj != NULL) {
+            atomic_add_int(&drawfs_vmobj_deallocs, 1);
             vm_object_deallocate(vmobj);
+        }
 
         if (s->surfaces_count > 0)
             s->surfaces_count--;

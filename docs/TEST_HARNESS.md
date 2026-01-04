@@ -192,6 +192,16 @@ current resource usage in real-time.
 sudo python3 tests/test_observability.py
 ```
 
+### VM Object Counters
+`tests/test_vmobj_counters.py` - Validates vm_object lifecycle tracking.
+
+Tests that `hw.drawfs.vmobj_allocs` and `hw.drawfs.vmobj_deallocs` correctly
+track vm_object allocations/deallocations for leak detection.
+
+```sh
+sudo python3 tests/test_vmobj_counters.py
+```
+
 ## Running Tests
 
 Individual test:
