@@ -27,7 +27,7 @@
    - [x] Shared Python helper module (`tests/drawfs_test.py`) for framing, request building, and event parsing
    - [x] DrawSession context manager for cleaner test code
    - [x] Select-based reads to avoid indefinite blocking
-   - [ ] Debug tool to dump decoded frames from raw read buffer
+   - [x] Debug tool to dump decoded frames from raw read buffer (tests/drawfs_dump.py)
 
 ### Remaining optional work
 
