@@ -59,6 +59,37 @@ SYSCTL_INT(_hw_drawfs, OID_AUTO, mmap_enabled, CTLFLAG_RW,
     "Allow mmap of surface memory (1=enabled, 0=disabled)");
 
 /*
+ * Tunable resource limits.
+ *
+ * These can be adjusted at runtime via sysctl. Changes take effect for new
+ * operations; existing sessions/surfaces are not retroactively affected.
+ */
+int drawfs_max_evq_bytes = DRAWFS_MAX_EVQ_BYTES;
+SYSCTL_INT(_hw_drawfs, OID_AUTO, max_evq_bytes, CTLFLAG_RW,
+    &drawfs_max_evq_bytes, 0,
+    "Maximum event queue bytes per session (default: 8192)");
+
+int drawfs_max_surfaces = DRAWFS_MAX_SURFACES;
+SYSCTL_INT(_hw_drawfs, OID_AUTO, max_surfaces, CTLFLAG_RW,
+    &drawfs_max_surfaces, 0,
+    "Maximum surfaces per session (default: 64)");
+
+long drawfs_max_surface_bytes = DRAWFS_MAX_SURFACE_BYTES;
+SYSCTL_LONG(_hw_drawfs, OID_AUTO, max_surface_bytes, CTLFLAG_RW,
+    &drawfs_max_surface_bytes, 0,
+    "Maximum bytes per surface (default: 64MB)");
+
+long drawfs_max_session_surface_bytes = DRAWFS_MAX_SESSION_SURFACE_BYTES;
+SYSCTL_LONG(_hw_drawfs, OID_AUTO, max_session_surface_bytes, CTLFLAG_RW,
+    &drawfs_max_session_surface_bytes, 0,
+    "Maximum cumulative surface bytes per session (default: 256MB)");
+
+static int drawfs_coalesce_events = 1;
+SYSCTL_INT(_hw_drawfs, OID_AUTO, coalesce_events, CTLFLAG_RW,
+    &drawfs_coalesce_events, 0,
+    "Coalesce repeated SURFACE_PRESENTED events (1=enabled, 0=disabled)");
+
+/*
  * Locking model:
  *
  * Each session has a mutex (s->lock) that protects:
@@ -271,6 +302,17 @@ send_reply:
     evt.surface_id = surface_id;
     evt.reserved = 0;
     evt.cookie = cookie;
+
+    /*
+     * Try to coalesce with existing SURFACE_PRESENTED event for same surface.
+     * This reduces queue pressure when userland is slow to drain.
+     */
+    mtx_lock(&s->lock);
+    if (drawfs_try_coalesce_presented(s, surface_id, cookie) == 0) {
+        mtx_unlock(&s->lock);
+        return (0);  /* Coalesced - no new event needed */
+    }
+    mtx_unlock(&s->lock);
 
     (void)drawfs_send_reply(s, DRAWFS_EVT_SURFACE_PRESENTED, 0, &evt, sizeof(evt));
 
@@ -613,6 +655,54 @@ drawfs_session_free(struct drawfs_session *s)
 }
 
 /*
+ * Try to coalesce a SURFACE_PRESENTED event with an existing one in the queue.
+ * Must be called with s->lock held.
+ * Returns 0 if coalesced (caller should not enqueue new event), ENOENT otherwise.
+ */
+static int
+drawfs_try_coalesce_presented(struct drawfs_session *s, uint32_t surface_id,
+    uint64_t new_cookie)
+{
+    struct drawfs_event *ev;
+    struct drawfs_msg_hdr mh;
+    uint32_t ev_surface_id;
+    size_t payload_off;
+
+    if (!drawfs_coalesce_events)
+        return (ENOENT);
+
+    /*
+     * Search queue for existing SURFACE_PRESENTED event for same surface.
+     * Frame format: frame_hdr(16) + msg_hdr(16) + payload(16)
+     * Payload: surface_id(4) + reserved(4) + cookie(8)
+     */
+    TAILQ_FOREACH(ev, &s->evq, link) {
+        if (ev->len < sizeof(struct drawfs_frame_hdr) +
+            sizeof(struct drawfs_msg_hdr) + 16)
+            continue;
+
+        /* Check msg_type at offset 16 */
+        memcpy(&mh, ev->bytes + sizeof(struct drawfs_frame_hdr),
+            sizeof(mh));
+        if (mh.msg_type != DRAWFS_EVT_SURFACE_PRESENTED)
+            continue;
+
+        /* Check surface_id at offset 32 */
+        payload_off = sizeof(struct drawfs_frame_hdr) +
+            sizeof(struct drawfs_msg_hdr);
+        memcpy(&ev_surface_id, ev->bytes + payload_off, sizeof(uint32_t));
+        if (ev_surface_id != surface_id)
+            continue;
+
+        /* Found match - update cookie at offset 40 (payload_off + 8) */
+        memcpy(ev->bytes + payload_off + 8, &new_cookie, sizeof(uint64_t));
+        return (0);
+    }
+
+    return (ENOENT);
+}
+
+/*
  * Enqueue an event (frame) to the session's read queue.
  * Acquires and releases s->lock internally.
  */
@@ -636,8 +726,9 @@ drawfs_enqueue_event(struct drawfs_session *s, const void *buf, size_t len)
 
     /*
      * Step 19: event queue backpressure.
+     * Limit is tunable via hw.drawfs.max_evq_bytes sysctl.
      */
-    if (s->evq_bytes + len > DRAWFS_MAX_EVQ_BYTES) {
+    if (s->evq_bytes + len > (size_t)drawfs_max_evq_bytes) {
         s->stats.events_dropped++;
         mtx_unlock(&s->lock);
         free(ev->bytes, M_DRAWFS);

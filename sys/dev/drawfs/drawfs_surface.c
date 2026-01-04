@@ -77,10 +77,15 @@ drawfs_surface_create(struct drawfs_session *s,
     if (format != DRAWFS_FMT_XRGB8888)
         return (EPROTONOSUPPORT);
 
-    /* Step 18 hardening: compute size in 64-bit and clamp. */
+    /*
+     * Step 18 hardening: compute size in 64-bit and clamp.
+     * Limits are tunable via hw.drawfs.max_surface_bytes and
+     * hw.drawfs.max_session_surface_bytes sysctls.
+     */
     stride64 = (uint64_t)width_px * 4ULL;
     total64 = stride64 * (uint64_t)height_px;
-    if (stride64 == 0 || total64 == 0 || total64 > DRAWFS_MAX_SURFACE_BYTES)
+    if (stride64 == 0 || total64 == 0 ||
+        total64 > (uint64_t)drawfs_max_surface_bytes)
         return (EFBIG);
 
     /* Allocate surface object. */
@@ -88,9 +93,9 @@ drawfs_surface_create(struct drawfs_session *s,
 
     mtx_lock(&s->lock);
 
-    /* Check resource limits. */
-    if (s->surfaces_count >= DRAWFS_MAX_SURFACES ||
-        s->surfaces_bytes + total64 > DRAWFS_MAX_SESSION_SURFACE_BYTES) {
+    /* Check resource limits (tunable via hw.drawfs.max_surfaces sysctl). */
+    if (s->surfaces_count >= (uint32_t)drawfs_max_surfaces ||
+        s->surfaces_bytes + total64 > (uint64_t)drawfs_max_session_surface_bytes) {
         mtx_unlock(&s->lock);
         free(sf, M_DRAWFS);
         return (ENOSPC);
