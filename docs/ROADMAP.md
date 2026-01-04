@@ -60,10 +60,15 @@
 
 ## Backlog
 
-- Hardening: Add optional event coalescing for repeated SURFACE_PRESENTED events when userland is not draining quickly.
+### Completed
+
+- [x] Hardening: Event coalescing for repeated SURFACE_PRESENTED events (hw.drawfs.coalesce_events)
+- [x] Correctness: Stress tests for surface lifecycle (stress_surface_lifecycle.py)
+- [x] Concurrency: Multi-session stress tests with parallel/interleaved operations (stress_multi_session.py)
+- [x] Memory lifecycle: Validation tests using vmstat -m (test_memory_lifecycle.py)
+
+### Remaining
+
 - Observability: Expose per-session counters (evq_bytes, evq_drops, surfaces_live) in stats ioctl.
-- Correctness: Add regression tests that create/destroy/mmap/present surfaces under stress and verify no VM object leaks.
-- Concurrency: Add a multi-threaded fuzzer that interleaves writes/reads/closes across multiple sessions.
 - Compatibility: Confirm behavior on FreeBSD 15 with both debug and non-debug kernels.
-- Memory lifecycle validation: Add regression test that creates, mmaps, destroys many surfaces and checks for reclaimed VM objects (vmstat -m, vmstat -z) during CI.
 - Memory lifecycle validation: Add a debug sysctl counter for surface vm_object allocations and deallocations to catch leaks early.

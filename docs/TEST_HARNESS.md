@@ -154,6 +154,34 @@ Message 1:
 ### Step 19: Event Queue Backpressure
 `tests/step19_event_queue_backpressure_test.py` - Validates ENOSPC when event queue is full and recovery after draining.
 
+## Stress Tests
+
+### Surface Lifecycle Stress
+`tests/stress_surface_lifecycle.py` - Rapid surface create/destroy/present cycles.
+
+```sh
+sudo python3 tests/stress_surface_lifecycle.py -n 1000
+sudo python3 tests/stress_surface_lifecycle.py -t present -n 5000
+sudo python3 tests/stress_surface_lifecycle.py -t mixed -n 2000
+```
+
+### Multi-Session Stress
+`tests/stress_multi_session.py` - Concurrent operations across multiple sessions.
+
+```sh
+sudo python3 tests/stress_multi_session.py -w 4 -n 500  # 4 parallel workers
+sudo python3 tests/stress_multi_session.py -t churn -n 200  # session open/close
+sudo python3 tests/stress_multi_session.py -t interleaved -s 5  # 5 interleaved sessions
+```
+
+### Memory Lifecycle Validation
+`tests/test_memory_lifecycle.py` - Validates memory release using vmstat -m.
+
+```sh
+sudo python3 tests/test_memory_lifecycle.py -n 100
+sudo python3 tests/test_memory_lifecycle.py -t churn -n 500
+```
+
 ## Running Tests
 
 Individual test:
@@ -171,3 +199,4 @@ All tests via build script:
 - Tests are designed to run without GPU hardware
 - All tests use select-based reads to avoid indefinite blocking
 - The shared module ensures consistent protocol encoding across all tests
+- Stress tests exercise kernel locking and resource management under load

@@ -84,6 +84,11 @@ SYSCTL_LONG(_hw_drawfs, OID_AUTO, max_session_surface_bytes, CTLFLAG_RW,
     &drawfs_max_session_surface_bytes, 0,
     "Maximum cumulative surface bytes per session (default: 256MB)");
 
+static int drawfs_coalesce_events = 1;
+SYSCTL_INT(_hw_drawfs, OID_AUTO, coalesce_events, CTLFLAG_RW,
+    &drawfs_coalesce_events, 0,
+    "Coalesce repeated SURFACE_PRESENTED events (1=enabled, 0=disabled)");
+
 /*
  * Locking model:
  *
@@ -297,6 +302,17 @@ send_reply:
     evt.surface_id = surface_id;
     evt.reserved = 0;
     evt.cookie = cookie;
+
+    /*
+     * Try to coalesce with existing SURFACE_PRESENTED event for same surface.
+     * This reduces queue pressure when userland is slow to drain.
+     */
+    mtx_lock(&s->lock);
+    if (drawfs_try_coalesce_presented(s, surface_id, cookie) == 0) {
+        mtx_unlock(&s->lock);
+        return (0);  /* Coalesced - no new event needed */
+    }
+    mtx_unlock(&s->lock);
 
     (void)drawfs_send_reply(s, DRAWFS_EVT_SURFACE_PRESENTED, 0, &evt, sizeof(evt));
 
@@ -636,6 +652,54 @@ drawfs_session_free(struct drawfs_session *s)
     cv_destroy(&s->cv);
     mtx_destroy(&s->lock);
     free(s, M_DRAWFS);
+}
+
+/*
+ * Try to coalesce a SURFACE_PRESENTED event with an existing one in the queue.
+ * Must be called with s->lock held.
+ * Returns 0 if coalesced (caller should not enqueue new event), ENOENT otherwise.
+ */
+static int
+drawfs_try_coalesce_presented(struct drawfs_session *s, uint32_t surface_id,
+    uint64_t new_cookie)
+{
+    struct drawfs_event *ev;
+    struct drawfs_msg_hdr mh;
+    uint32_t ev_surface_id;
+    size_t payload_off;
+
+    if (!drawfs_coalesce_events)
+        return (ENOENT);
+
+    /*
+     * Search queue for existing SURFACE_PRESENTED event for same surface.
+     * Frame format: frame_hdr(16) + msg_hdr(16) + payload(16)
+     * Payload: surface_id(4) + reserved(4) + cookie(8)
+     */
+    TAILQ_FOREACH(ev, &s->evq, link) {
+        if (ev->len < sizeof(struct drawfs_frame_hdr) +
+            sizeof(struct drawfs_msg_hdr) + 16)
+            continue;
+
+        /* Check msg_type at offset 16 */
+        memcpy(&mh, ev->bytes + sizeof(struct drawfs_frame_hdr),
+            sizeof(mh));
+        if (mh.msg_type != DRAWFS_EVT_SURFACE_PRESENTED)
+            continue;
+
+        /* Check surface_id at offset 32 */
+        payload_off = sizeof(struct drawfs_frame_hdr) +
+            sizeof(struct drawfs_msg_hdr);
+        memcpy(&ev_surface_id, ev->bytes + payload_off, sizeof(uint32_t));
+        if (ev_surface_id != surface_id)
+            continue;
+
+        /* Found match - update cookie at offset 40 (payload_off + 8) */
+        memcpy(ev->bytes + payload_off + 8, &new_cookie, sizeof(uint64_t));
+        return (0);
+    }
+
+    return (ENOENT);
 }
 
 /*
