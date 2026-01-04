@@ -168,3 +168,28 @@ The `DRAWFSGIOC_STATS` ioctl returns per-session statistics in a `struct drawfs_
 
 The last three fields (`evq_bytes`, `surfaces_count`, `surfaces_bytes`) provide
 real-time observability into session resource usage for debugging and monitoring.
+
+## Compatibility
+
+### Tested Platforms
+
+| FreeBSD Version | Kernel Type | Status |
+|-----------------|-------------|--------|
+| 15.0-RELEASE-p1 | Non-debug (GENERIC) | ✅ All tests pass |
+| 15.0-RELEASE-p1 | Debug (WITNESS) | Pending |
+
+### Testing on Debug Kernel
+
+To verify behavior with WITNESS lock debugging:
+
+```sh
+# Check if WITNESS is enabled
+sysctl kern.conftxt | grep WITNESS
+
+# Run tests and check for lock order violations
+sudo ./build.sh test
+dmesg | grep -i witness
+```
+
+WITNESS catches lock order violations and sleep-while-holding-lock bugs that
+may not manifest on non-debug kernels.

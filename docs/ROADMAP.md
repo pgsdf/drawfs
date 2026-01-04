@@ -67,8 +67,9 @@
 - [x] Concurrency: Multi-session stress tests with parallel/interleaved operations (stress_multi_session.py)
 - [x] Memory lifecycle: Validation tests using vmstat -m (test_memory_lifecycle.py)
 - [x] Observability: Expose per-session counters (evq_bytes, surfaces_count, surfaces_bytes) in stats ioctl (test_observability.py)
+- [x] Compatibility: Verified on FreeBSD 15.0-RELEASE-p1 (non-debug kernel) - all tests pass
 
 ### Remaining
 
-- Compatibility: Confirm behavior on FreeBSD 15 with both debug and non-debug kernels.
+- Compatibility: Test on FreeBSD 15 debug kernel (WITNESS enabled) when available.
 - Memory lifecycle validation: Add a debug sysctl counter for surface vm_object allocations and deallocations to catch leaks early.
