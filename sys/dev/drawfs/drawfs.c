@@ -17,6 +17,7 @@
 #include <sys/poll.h>
 #include <sys/queue.h>
 #include <sys/fcntl.h>
+#include <sys/sysctl.h>
 #include <vm/vm.h>
 #include <vm/vm_object.h>
 
@@ -27,6 +28,35 @@
 #include "drawfs_frame.h"
 
 MALLOC_DEFINE(M_DRAWFS, "drawfs", "drawfs session and object memory");
+
+/*
+ * Sysctl tunable security settings.
+ *
+ * These can be set via loader.conf (boot-time) or sysctl (runtime for some).
+ * Device permissions are only applied at module load time.
+ */
+static SYSCTL_NODE(_hw, OID_AUTO, drawfs, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+    "drawfs driver parameters");
+
+static int drawfs_dev_uid = 0;
+SYSCTL_INT(_hw_drawfs, OID_AUTO, dev_uid, CTLFLAG_RWTUN,
+    &drawfs_dev_uid, 0,
+    "Device node owner UID (applied at module load)");
+
+static int drawfs_dev_gid = 0;
+SYSCTL_INT(_hw_drawfs, OID_AUTO, dev_gid, CTLFLAG_RWTUN,
+    &drawfs_dev_gid, 0,
+    "Device node group GID (applied at module load)");
+
+static int drawfs_dev_mode = 0600;
+SYSCTL_INT(_hw_drawfs, OID_AUTO, dev_mode, CTLFLAG_RWTUN,
+    &drawfs_dev_mode, 0,
+    "Device node permissions (applied at module load)");
+
+static int drawfs_mmap_enabled = 1;
+SYSCTL_INT(_hw_drawfs, OID_AUTO, mmap_enabled, CTLFLAG_RW,
+    &drawfs_mmap_enabled, 0,
+    "Allow mmap of surface memory (1=enabled, 0=disabled)");
 
 /*
  * Locking model:
@@ -90,6 +120,7 @@ static struct cdevsw drawfs_cdevsw = {
 
 /*
  * Step 11: mmap backing store for a selected surface.
+ * Gated by hw.drawfs.mmap_enabled sysctl for security.
  */
 static int
 drawfs_mmap_single(struct cdev *dev, vm_ooffset_t *offset, vm_size_t size,
@@ -101,6 +132,10 @@ drawfs_mmap_single(struct cdev *dev, vm_ooffset_t *offset, vm_size_t size,
 
     (void)dev;
     (void)nprot;
+
+    /* Check sysctl gate before allowing mmap. */
+    if (!drawfs_mmap_enabled)
+        return (EPERM);
 
     if (offset == NULL || objp == NULL)
         return (EINVAL);
@@ -930,8 +965,13 @@ drawfs_modevent(module_t mod, int type, void *data)
 
     switch (type) {
     case MOD_LOAD:
-        drawfs_dev = make_dev(&drawfs_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600, DRAWFS_DEVNAME);
-        uprintf("drawfs loaded, device %s created\n", DRAWFS_NODEPATH);
+        drawfs_dev = make_dev(&drawfs_cdevsw, 0,
+            (uid_t)drawfs_dev_uid,
+            (gid_t)drawfs_dev_gid,
+            drawfs_dev_mode,
+            DRAWFS_DEVNAME);
+        uprintf("drawfs loaded, device %s created (uid=%d gid=%d mode=%04o)\n",
+            DRAWFS_NODEPATH, drawfs_dev_uid, drawfs_dev_gid, drawfs_dev_mode);
         break;
 
     case MOD_UNLOAD:
