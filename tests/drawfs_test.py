@@ -312,8 +312,8 @@ def _iowr(group: str, num: int, size: int) -> int:
     return _ioc(0xC0000000, ord(group), num, size)
 
 
-# Stats ioctl: _IOR('D', 0x01, struct drawfs_stats) - 80 bytes
-STATS_SIZE = 80  # 9 uint64s + 2 uint32s
+# Stats ioctl: _IOR('D', 0x01, struct drawfs_stats) - 96 bytes
+STATS_SIZE = 96  # 9 uint64s + 4 uint32s + 1 uint64
 DRAWFSGIOC_STATS = _ior('D', 0x01, STATS_SIZE)
 
 def get_stats(fd: int) -> Dict[str, int]:
@@ -321,11 +321,12 @@ def get_stats(fd: int) -> Dict[str, int]:
     Get session statistics via ioctl.
     Returns dict with: frames_received, frames_processed, frames_invalid,
     messages_processed, messages_unsupported, events_enqueued, events_dropped,
-    bytes_in, bytes_out, evq_depth, inbuf_bytes.
+    bytes_in, bytes_out, evq_depth, inbuf_bytes, evq_bytes, surfaces_count,
+    surfaces_bytes.
     """
     buf = bytearray(STATS_SIZE)
     fcntl.ioctl(fd, DRAWFSGIOC_STATS, buf)
-    vals = struct.unpack("<QQQQQQQQQII", buf)
+    vals = struct.unpack("<QQQQQQQQQIIIIQ", buf)
     return {
         'frames_received': vals[0],
         'frames_processed': vals[1],
@@ -338,6 +339,9 @@ def get_stats(fd: int) -> Dict[str, int]:
         'bytes_out': vals[8],
         'evq_depth': vals[9],
         'inbuf_bytes': vals[10],
+        'evq_bytes': vals[11],
+        'surfaces_count': vals[12],
+        'surfaces_bytes': vals[13],
     }
 
 

@@ -23,6 +23,9 @@ print_stats(const char *tag, const struct drawfs_stats *st)
     printf("bytes_out            %llu\n", (unsigned long long)st->bytes_out);
     printf("evq_depth            %u\n", st->evq_depth);
     printf("inbuf_bytes          %u\n", st->inbuf_bytes);
+    printf("evq_bytes            %u\n", st->evq_bytes);
+    printf("surfaces_count       %u\n", st->surfaces_count);
+    printf("surfaces_bytes       %llu\n", (unsigned long long)st->surfaces_bytes);
 }
 
 int

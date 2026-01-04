@@ -144,3 +144,27 @@ Examples.
 * `EPROTONOSUPPORT` is 43 on FreeBSD
 
 Clients must not hardcode Linux errno numbers.
+
+## Stats ioctl
+
+The `DRAWFSGIOC_STATS` ioctl returns per-session statistics in a `struct drawfs_stats`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `frames_received` | uint64 | Total frames received from client |
+| `frames_processed` | uint64 | Frames successfully processed |
+| `frames_invalid` | uint64 | Frames rejected (malformed) |
+| `messages_processed` | uint64 | Messages successfully processed |
+| `messages_unsupported` | uint64 | Messages with unknown type |
+| `events_enqueued` | uint64 | Total events queued (cumulative) |
+| `events_dropped` | uint64 | Events dropped due to queue full |
+| `bytes_in` | uint64 | Total bytes received |
+| `bytes_out` | uint64 | Total bytes sent |
+| `evq_depth` | uint32 | Current number of events in queue |
+| `inbuf_bytes` | uint32 | Bytes in input buffer (partial frame) |
+| `evq_bytes` | uint32 | Current bytes in event queue |
+| `surfaces_count` | uint32 | Current number of live surfaces |
+| `surfaces_bytes` | uint64 | Total bytes allocated to surfaces |
+
+The last three fields (`evq_bytes`, `surfaces_count`, `surfaces_bytes`) provide
+real-time observability into session resource usage for debugging and monitoring.

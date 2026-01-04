@@ -600,6 +600,11 @@ drawfs_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag, struct threa
         }
         out->evq_depth = depth;
 
+        /* Observability: current resource usage */
+        out->evq_bytes = (uint32_t)s->evq_bytes;
+        out->surfaces_count = s->surfaces_count;
+        out->surfaces_bytes = s->surfaces_bytes;
+
         mtx_unlock(&s->lock);
         return (0);
     }

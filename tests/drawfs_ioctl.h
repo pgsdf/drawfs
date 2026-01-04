@@ -25,6 +25,11 @@ struct drawfs_stats {
 
     uint32_t evq_depth;
     uint32_t inbuf_bytes;
+
+    /* Observability: current resource usage */
+    uint32_t evq_bytes;         /* current bytes in event queue */
+    uint32_t surfaces_count;    /* current number of live surfaces */
+    uint64_t surfaces_bytes;    /* total bytes allocated to surfaces */
 };
 
 #define DRAWFSGIOC_STATS _IOR('D', 0x01, struct drawfs_stats)
