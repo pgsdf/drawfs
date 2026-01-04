@@ -24,6 +24,7 @@
 #include "drawfs_proto.h"
 #include "drawfs_internal.h"
 #include "drawfs_surface.h"
+#include "drawfs_frame.h"
 
 MALLOC_DEFINE(M_DRAWFS, "drawfs", "drawfs session and object memory");
 
@@ -47,7 +48,6 @@ static int drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id
 static int drawfs_reply_surface_destroy(struct drawfs_session *s, uint32_t msg_id, const uint8_t *payload, size_t payload_len);
 static int drawfs_reply_surface_present(struct drawfs_session *s, uint32_t msg_id, const uint8_t *payload, size_t payload_len);
 
-static int drawfs_validate_frame(const uint8_t *buf, size_t n, struct drawfs_frame_hdr *out_hdr, uint32_t *out_err_offset);
 static int drawfs_process_frame(struct drawfs_session *s, const uint8_t *buf, size_t n);
 
 static int drawfs_ingest_bytes(struct drawfs_session *s, const uint8_t *buf, size_t n);
@@ -714,7 +714,7 @@ drawfs_try_process_inbuf(struct drawfs_session *s)
 
         mtx_unlock(&s->lock);
 
-        v = drawfs_validate_frame(frame, frame_bytes, &fh, &err_off);
+        v = drawfs_frame_validate(frame, frame_bytes, &fh, &err_off);
         if (v != DRAWFS_ERR_OK) {
             s->stats.frames_invalid += 1;
             (void)drawfs_reply_error(s, 0, (uint32_t)v, err_off);
@@ -733,60 +733,13 @@ drawfs_try_process_inbuf(struct drawfs_session *s)
 }
 
 static int
-drawfs_validate_frame(const uint8_t *buf, size_t n, struct drawfs_frame_hdr *out_hdr, uint32_t *out_err_offset)
-{
-    struct drawfs_frame_hdr fh;
-
-    if (n < sizeof(fh)) {
-        *out_err_offset = 0;
-        return (DRAWFS_ERR_INVALID_FRAME);
-    }
-
-    memcpy(&fh, buf, sizeof(fh));
-
-    if (fh.magic != DRAWFS_MAGIC) {
-        *out_err_offset = 0;
-        return (DRAWFS_ERR_INVALID_FRAME);
-    }
-
-    if (fh.version != DRAWFS_VERSION) {
-        *out_err_offset = offsetof(struct drawfs_frame_hdr, version);
-        return (DRAWFS_ERR_UNSUPPORTED_VERSION);
-    }
-
-    if (fh.header_bytes != sizeof(struct drawfs_frame_hdr)) {
-        *out_err_offset = offsetof(struct drawfs_frame_hdr, header_bytes);
-        return (DRAWFS_ERR_INVALID_FRAME);
-    }
-
-    if (fh.frame_bytes < fh.header_bytes) {
-        *out_err_offset = offsetof(struct drawfs_frame_hdr, frame_bytes);
-        return (DRAWFS_ERR_INVALID_FRAME);
-    }
-
-    if (fh.frame_bytes > n) {
-        *out_err_offset = offsetof(struct drawfs_frame_hdr, frame_bytes);
-        return (DRAWFS_ERR_INVALID_FRAME);
-    }
-
-    if ((fh.frame_bytes & 3u) != 0) {
-        *out_err_offset = offsetof(struct drawfs_frame_hdr, frame_bytes);
-        return (DRAWFS_ERR_INVALID_FRAME);
-    }
-
-    *out_hdr = fh;
-    *out_err_offset = 0;
-    return (DRAWFS_ERR_OK);
-}
-
-static int
 drawfs_process_frame(struct drawfs_session *s, const uint8_t *buf, size_t n)
 {
     struct drawfs_frame_hdr fh;
     uint32_t err_off;
     int v;
 
-    v = drawfs_validate_frame(buf, n, &fh, &err_off);
+    v = drawfs_frame_validate(buf, n, &fh, &err_off);
     if (v != DRAWFS_ERR_OK) {
         (void)drawfs_reply_error(s, 0, (uint32_t)v, err_off);
         return (0);
@@ -874,39 +827,15 @@ static int
 drawfs_send_reply(struct drawfs_session *s, uint16_t msg_type,
     uint32_t msg_id, const void *payload, size_t payload_len)
 {
-    struct drawfs_frame_hdr fh;
-    struct drawfs_msg_hdr mh;
-    uint32_t msg_bytes;
-    uint32_t msg_bytes_aligned;
-    uint32_t frame_bytes;
-    uint8_t *out;
+    uint8_t *frame;
+    size_t frame_len;
     int err;
 
-    msg_bytes = (uint32_t)(sizeof(struct drawfs_msg_hdr) + payload_len);
-    msg_bytes_aligned = drawfs_align4(msg_bytes);
-    frame_bytes = (uint32_t)sizeof(struct drawfs_frame_hdr) + msg_bytes_aligned;
+    frame = drawfs_frame_build(s->next_out_frame_id++, msg_type, msg_id,
+        payload, payload_len, &frame_len);
 
-    out = malloc(frame_bytes, M_DRAWFS, M_WAITOK | M_ZERO);
-
-    fh.magic = DRAWFS_MAGIC;
-    fh.version = DRAWFS_VERSION;
-    fh.header_bytes = (uint16_t)sizeof(struct drawfs_frame_hdr);
-    fh.frame_bytes = frame_bytes;
-    fh.frame_id = s->next_out_frame_id++;
-
-    mh.msg_type = msg_type;
-    mh.msg_flags = 0;
-    mh.msg_bytes = msg_bytes;
-    mh.msg_id = msg_id;
-    mh.reserved = 0;
-
-    memcpy(out, &fh, sizeof(fh));
-    memcpy(out + sizeof(fh), &mh, sizeof(mh));
-    if (payload != NULL && payload_len > 0)
-        memcpy(out + sizeof(fh) + sizeof(mh), payload, payload_len);
-
-    err = drawfs_enqueue_event(s, out, frame_bytes);
-    free(out, M_DRAWFS);
+    err = drawfs_enqueue_event(s, frame, frame_len);
+    free(frame, M_DRAWFS);
     return (err);
 }
 
