@@ -11,9 +11,12 @@
 #include <sys/malloc.h>
 #include <sys/errno.h>
 #include <sys/lock.h>
+#include <sys/rwlock.h>
+#include <sys/pctrie.h>
 #include <sys/mutex.h>
 #include <vm/vm.h>
 #include <vm/vm_param.h>
+#include <vm/vm_page.h>
 #include <vm/vm_object.h>
 #include <vm/vm_pager.h>
 
