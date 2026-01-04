@@ -1,3 +1,7 @@
+/*
+ * drawfs.c - FreeBSD character device for graphics protocol
+ */
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -7,83 +11,21 @@
 #include <sys/errno.h>
 #include <sys/uio.h>
 #include <sys/selinfo.h>
-
-#include <sys/lock.h>
-#include <sys/rwlock.h>
-#include <sys/pctrie.h>
-#include <vm/vm.h>
-#include <vm/vm_param.h>
-#include <vm/vm_page.h>
-#include <vm/vm_object.h>
-#include <vm/vm_pager.h>
-#include <sys/poll.h>
-#include <sys/queue.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/condvar.h>
+#include <sys/poll.h>
+#include <sys/queue.h>
 #include <sys/fcntl.h>
+#include <vm/vm.h>
+#include <vm/vm_object.h>
 
 #include "drawfs.h"
 #include "drawfs_proto.h"
-#include "drawfs_ioctl.h"
+#include "drawfs_internal.h"
+#include "drawfs_surface.h"
 
 MALLOC_DEFINE(M_DRAWFS, "drawfs", "drawfs session and object memory");
-
-struct drawfs_event {
-    TAILQ_ENTRY(drawfs_event) link;
-    size_t len;
-    uint8_t *bytes;
-};
-
-struct drawfs_surface {
-    TAILQ_ENTRY(drawfs_surface) link;
-    uint32_t id;
-    uint32_t width_px;
-    uint32_t height_px;
-    uint32_t format;
-    uint32_t stride_bytes;
-    uint32_t bytes_total;
-    vm_object_t vmobj;
-    int vmobj_refs;
-};
-
-TAILQ_HEAD(drawfs_surface_list, drawfs_surface);
-TAILQ_HEAD(drawfs_eventq, drawfs_event);
-
-struct drawfs_session {
-    struct mtx lock;
-    struct cv cv;
-    struct selinfo sel;
-
-    struct drawfs_eventq evq;
-    size_t evq_bytes;
-    bool closing;
-
-    uint32_t next_out_frame_id;
-
-    /* Input accumulation */
-    uint8_t *inbuf;
-    size_t in_len;
-    size_t in_cap;
-
-    /* Display binding (Step 9) */
-    uint32_t active_display_id;
-    uint32_t map_surface_id; /* surface selected for mmap */
-    uint32_t active_surface_id; /* last presented surface */
-    uint32_t next_display_handle;
-    uint32_t active_display_handle;
-
-    /* Surface objects (Step 10A) */
-    struct drawfs_surface_list surfaces;
-    uint32_t next_surface_id;
-
-    /* Step 18 hardening: surface resource accounting */
-    uint32_t surfaces_count;
-    uint64_t surfaces_bytes;
-
-    /* Stats (per session) */
-    struct drawfs_stats stats;
-};
 
 static int drawfs_open(struct cdev *dev, int oflags, int devtype, struct thread *td);
 static int drawfs_close(struct cdev *dev, int fflag, int devtype, struct thread *td);
@@ -91,76 +33,6 @@ static int drawfs_read(struct cdev *dev, struct uio *uio, int ioflag);
 static int drawfs_write(struct cdev *dev, struct uio *uio, int ioflag);
 static int drawfs_poll(struct cdev *dev, int events, struct thread *td);
 static int drawfs_mmap_single(struct cdev *dev, vm_ooffset_t *offset, vm_size_t size, struct vm_object **objp, int nprot);
-/*
- * Step 11: mmap backing store for a selected surface.
- *
- * The selection is per file descriptor:
- * 1) user calls DRAWFSGIOC_MAP_SURFACE with surface_id
- * 2) user mmaps /dev/draw with offset 0 and size <= bytes_total
- *
- * We return a swap backed vm_object sized to bytes_total.
- */
-static int
-drawfs_mmap_single(struct cdev *dev, vm_ooffset_t *offset, vm_size_t size,
-    struct vm_object **objp, int nprot)
-{
-    struct drawfs_session *s;
-    struct drawfs_surface *sf;
-    vm_object_t obj;
-
-    (void)nprot;
-
-    if (offset == NULL || objp == NULL)
-        return (EINVAL);
-
-    if (*offset != 0)
-        return (EINVAL);
-
-    if (size == 0)
-        return (EINVAL);
-    /* Per-file-descriptor session */
-    if (devfs_get_cdevpriv((void **)&s) != 0 || s == NULL)
-        return (ENXIO);
-
-    sf = NULL;
-
-    mtx_lock(&s->lock);
-
-    if (s->map_surface_id != 0) {
-        TAILQ_FOREACH(sf, &s->surfaces, link) {
-            if (sf->id == s->map_surface_id)
-                break;
-        }
-    }
-
-    if (sf == NULL) {
-        mtx_unlock(&s->lock);
-        return (ENOENT);
-    }
-
-    if (size > (vm_size_t)sf->bytes_total) {
-        mtx_unlock(&s->lock);
-        return (EINVAL);
-    }
-
-    if (sf->vmobj == NULL) {
-        obj = vm_pager_allocate(OBJT_SWAP, NULL, (vm_size_t)sf->bytes_total,
-            VM_PROT_DEFAULT, 0, NULL);
-        if (obj == NULL) {
-            mtx_unlock(&s->lock);
-            return (ENOMEM);
-        }
-        sf->vmobj = obj;
-    }
-
-    vm_object_reference(sf->vmobj);
-    *objp = sf->vmobj;
-
-    mtx_unlock(&s->lock);
-    return (0);
-}
-
-
 static int drawfs_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag, struct thread *td);
 
 static void drawfs_session_free(struct drawfs_session *s);
@@ -174,7 +46,6 @@ static int drawfs_reply_display_open(struct drawfs_session *s, uint32_t msg_id, 
 static int drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id, const uint8_t *payload, size_t payload_len);
 static int drawfs_reply_surface_destroy(struct drawfs_session *s, uint32_t msg_id, const uint8_t *payload, size_t payload_len);
 static int drawfs_reply_surface_present(struct drawfs_session *s, uint32_t msg_id, const uint8_t *payload, size_t payload_len);
-static void drawfs_free_surfaces(struct drawfs_session *s);
 
 static int drawfs_validate_frame(const uint8_t *buf, size_t n, struct drawfs_frame_hdr *out_hdr, uint32_t *out_err_offset);
 static int drawfs_process_frame(struct drawfs_session *s, const uint8_t *buf, size_t n);
@@ -200,35 +71,44 @@ static struct cdevsw drawfs_cdevsw = {
 };
 
 /*
- * Step 12: SURFACE_PRESENT
- * Semantic present. For now this only records the active surface on the session.
- * A later step will bind this to KMS/DRM, page flips, and damage tracking.
+ * Step 11: mmap backing store for a selected surface.
  */
+static int
+drawfs_mmap_single(struct cdev *dev, vm_ooffset_t *offset, vm_size_t size,
+    struct vm_object **objp, int nprot)
+{
+    struct drawfs_session *s;
+    vm_object_t obj;
+    int status;
+
+    (void)dev;
+    (void)nprot;
+
+    if (offset == NULL || objp == NULL)
+        return (EINVAL);
+
+    if (*offset != 0)
+        return (EINVAL);
+
+    if (size == 0)
+        return (EINVAL);
+
+    if (devfs_get_cdevpriv((void **)&s) != 0 || s == NULL)
+        return (ENXIO);
+
+    obj = drawfs_surface_get_vmobj(s, size, &status);
+    if (obj == NULL)
+        return (status);
+
+    *objp = obj;
+    return (0);
+}
+
 static void
 drawfs_priv_dtor(void *data)
 {
     struct drawfs_session *s = (struct drawfs_session *)data;
     drawfs_session_free(s);
-}
-
-/*
- * Lookup a surface by ID.
- * Caller does not need to hold s->lock.
- */
-static struct drawfs_surface *
-drawfs_surface_lookup(struct drawfs_session *s, uint32_t surface_id)
-{
-    struct drawfs_surface *it;
-
-    mtx_lock(&s->lock);
-    TAILQ_FOREACH(it, &s->surfaces, link) {
-        if (it->id == surface_id) {
-            mtx_unlock(&s->lock);
-            return it;
-        }
-    }
-    mtx_unlock(&s->lock);
-    return NULL;
 }
 
 /*
@@ -240,7 +120,7 @@ drawfs_reply_surface_destroy(struct drawfs_session *s, uint32_t msg_id,
 {
     struct drawfs_surface_destroy_req req;
     struct drawfs_surface_destroy_rep rep;
-    struct drawfs_surface *sf;
+    int err;
 
     rep.status = 0;
     rep.surface_id = 0;
@@ -253,47 +133,9 @@ drawfs_reply_surface_destroy(struct drawfs_session *s, uint32_t msg_id,
     memcpy(&req, payload, sizeof(req));
     rep.surface_id = req.surface_id;
 
-    if (req.surface_id == 0) {
-        rep.status = EINVAL;
-        goto send_reply;
-    }
-
-    /* Detach from session list under lock */
-    sf = NULL;
-    mtx_lock(&s->lock);
-    TAILQ_FOREACH(sf, &s->surfaces, link) {
-        if (sf->id == req.surface_id)
-            break;
-    }
-    if (sf != NULL)
-        TAILQ_REMOVE(&s->surfaces, sf, link);
-
-    if (sf != NULL) {
-        if (s->surfaces_count > 0)
-            s->surfaces_count--;
-        if (s->surfaces_bytes >= sf->bytes_total)
-            s->surfaces_bytes -= sf->bytes_total;
-        else
-            s->surfaces_bytes = 0;
-    }
-
-    /* If this surface was selected for mmap, clear selection */
-    if (sf != NULL && s->map_surface_id == sf->id)
-        s->map_surface_id = 0;
-    mtx_unlock(&s->lock);
-
-    if (sf == NULL) {
-        rep.status = ENOENT;
-        goto send_reply;
-    }
-
-    /* Release backing VM object, if any */
-    if (sf->vmobj != NULL) {
-        vm_object_deallocate(sf->vmobj);
-        sf->vmobj = NULL;
-    }
-
-    free(sf, M_DRAWFS);
+    err = drawfs_surface_destroy(s, req.surface_id);
+    if (err != 0)
+        rep.status = err;
 
 send_reply:
     return drawfs_send_reply(s, DRAWFS_RPL_SURFACE_DESTROY, msg_id, &rep, sizeof(rep));
@@ -301,8 +143,6 @@ send_reply:
 
 /*
  * Step 12: SURFACE_PRESENT
- * Acknowledge that a surface should be displayed, and emit an async
- * SURFACE_PRESENTED event (with the cookie echoed back) on success.
  */
 static int
 drawfs_reply_surface_present(struct drawfs_session *s, uint32_t msg_id,
@@ -386,9 +226,6 @@ send_reply:
 
 /*
  * Step 10A: SURFACE_CREATE
- * Create a semantic surface object and allocate its backing VM object.
- * The surface can later be selected via DRAWFSGIOC_MAP_SURFACE and
- * presented to the active display via SURFACE_PRESENT.
  */
 static int
 drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id,
@@ -396,21 +233,12 @@ drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id,
 {
     struct drawfs_surface_create_req req;
     struct drawfs_surface_create_rep rep;
-    struct drawfs_surface *sf;
-    uint64_t stride64, total64;
+    int err;
 
     rep.status = 0;
     rep.surface_id = 0;
     rep.stride_bytes = 0;
     rep.bytes_total = 0;
-
-    sf = NULL;
-
-    /* Must bind a display first. */
-    if (s->active_display_id == 0) {
-        rep.status = EINVAL;
-        goto send_reply;
-    }
 
     if (payload_len < sizeof(req)) {
         rep.status = EINVAL;
@@ -419,93 +247,13 @@ drawfs_reply_surface_create(struct drawfs_session *s, uint32_t msg_id,
 
     memcpy(&req, payload, sizeof(req));
 
-    if (req.width_px == 0 || req.height_px == 0) {
-        rep.status = EINVAL;
-        goto send_reply;
-    }
-
-    if (req.format != DRAWFS_FMT_XRGB8888) {
-        rep.status = EPROTONOSUPPORT;
-        goto send_reply;
-    }
-
-    /* Step 18 hardening: compute size in 64-bit and clamp. */
-    stride64 = (uint64_t)req.width_px * 4ULL;
-    total64 = stride64 * (uint64_t)req.height_px;
-    if (stride64 == 0 || total64 == 0 || total64 > DRAWFS_MAX_SURFACE_BYTES) {
-        rep.status = EFBIG;
-        goto send_reply;
-    }
-
-    /* Allocate and record a semantic surface object. */
-    sf = malloc(sizeof(*sf), M_DRAWFS, M_WAITOK | M_ZERO);
-
-    mtx_lock(&s->lock);
-    if (s->surfaces_count >= DRAWFS_MAX_SURFACES ||
-        s->surfaces_bytes + total64 > DRAWFS_MAX_SESSION_SURFACE_BYTES) {
-        mtx_unlock(&s->lock);
-        rep.status = ENOSPC;
-        free(sf, M_DRAWFS);
-        sf = NULL;
-        goto send_reply;
-    }
-
-    sf->id = s->next_surface_id++;
-    sf->width_px = req.width_px;
-    sf->height_px = req.height_px;
-    sf->format = req.format;
-    sf->stride_bytes = (uint32_t)stride64;
-    sf->bytes_total = (uint32_t)total64;
-
-    TAILQ_INSERT_TAIL(&s->surfaces, sf, link);
-
-    s->surfaces_count++;
-    s->surfaces_bytes += total64;
-
-    rep.surface_id = sf->id;
-    rep.stride_bytes = sf->stride_bytes;
-    rep.bytes_total = sf->bytes_total;
-    mtx_unlock(&s->lock);
+    err = drawfs_surface_create(s, req.width_px, req.height_px, req.format,
+        &rep.surface_id, &rep.stride_bytes, &rep.bytes_total);
+    if (err != 0)
+        rep.status = err;
 
 send_reply:
     return drawfs_send_reply(s, DRAWFS_RPL_SURFACE_CREATE, msg_id, &rep, sizeof(rep));
-}
-
-static void
-drawfs_free_surfaces(struct drawfs_session *s)
-{
-    struct drawfs_surface *sf;
-
-    while ((sf = TAILQ_FIRST(&s->surfaces)) != NULL) {
-        struct vm_object *vmobj;
-
-        TAILQ_REMOVE(&s->surfaces, sf, link);
-
-        /* If this surface is the one currently selected for mmap, clear mapping. */
-        mtx_lock(&s->lock);
-        if (s->map_surface_id == sf->id) {
-            s->map_surface_id = 0;
-        }
-        mtx_unlock(&s->lock);
-
-        vmobj = sf->vmobj;
-        sf->vmobj = NULL;
-        if (vmobj != NULL)
-            vm_object_deallocate(vmobj);
-
-        if (s->surfaces_count > 0)
-            s->surfaces_count--;
-        if (s->surfaces_bytes >= sf->bytes_total)
-            s->surfaces_bytes -= sf->bytes_total;
-        else
-            s->surfaces_bytes = 0;
-
-        free(sf, M_DRAWFS);
-    }
-
-    /* Ensure accounting is fully reset. */
-    s->surfaces_count = 0;
-    s->surfaces_bytes = 0;
 }
 
 static int
@@ -722,43 +470,25 @@ drawfs_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag, struct threa
         return (error);
 
     switch (cmd) {
-    
-case DRAWFSGIOC_MAP_SURFACE:
-{
-    struct drawfs_map_surface *ms;
-    struct drawfs_surface *sf;
 
-    ms = (struct drawfs_map_surface *)data;
-    ms->status = 0;
-    ms->stride_bytes = 0;
-    ms->bytes_total = 0;
+    case DRAWFSGIOC_MAP_SURFACE: {
+        struct drawfs_map_surface *ms;
+        int err;
 
-    if (ms->surface_id == 0) {
-        ms->status = EINVAL;
+        ms = (struct drawfs_map_surface *)data;
+        ms->status = 0;
+        ms->stride_bytes = 0;
+        ms->bytes_total = 0;
+
+        err = drawfs_surface_select_for_mmap(s, ms->surface_id,
+            &ms->stride_bytes, &ms->bytes_total);
+        if (err != 0)
+            ms->status = err;
+
         break;
     }
 
-    sf = NULL;
-    mtx_lock(&s->lock);
-    TAILQ_FOREACH(sf, &s->surfaces, link) {
-        if (sf->id == ms->surface_id)
-            break;
-    }
-    if (sf != NULL) {
-        s->map_surface_id = ms->surface_id;
-        ms->stride_bytes = sf->stride_bytes;
-        ms->bytes_total = sf->bytes_total;
-    }
-    mtx_unlock(&s->lock);
-
-    if (sf == NULL)
-        ms->status = ENOENT;
-
-    break;
-
-}
-
-case DRAWFSGIOC_STATS: {
+    case DRAWFSGIOC_STATS: {
         struct drawfs_stats *out = (struct drawfs_stats *)data;
 
         mtx_lock(&s->lock);
@@ -777,13 +507,13 @@ case DRAWFSGIOC_STATS: {
         mtx_unlock(&s->lock);
         return (0);
     }
+
     default:
         return (ENOTTY);
     }
-	return (0);
+
+    return (0);
 }
-
-
 
 static void
 drawfs_session_free(struct drawfs_session *s)
@@ -815,6 +545,9 @@ drawfs_session_free(struct drawfs_session *s)
 
     mtx_unlock(&s->lock);
 
+    /* Free all surfaces (uses its own locking). */
+    drawfs_surfaces_free_all(s);
+
     seldrain(&s->sel);
     cv_destroy(&s->cv);
     mtx_destroy(&s->lock);
@@ -837,33 +570,31 @@ drawfs_enqueue_event(struct drawfs_session *s, const void *buf, size_t len)
     ev->len = len;
     memcpy(ev->bytes, buf, len);
 
-	mtx_lock(&s->lock);
+    mtx_lock(&s->lock);
 
-	/*
-	 * Step 19: event queue backpressure.
-	 * Bound the per-session output queue (events and replies). If the queue
-	 * exceeds the limit, reject with ENOSPC so userland is forced to drain.
-	 */
-	if (s->evq_bytes + len > DRAWFS_MAX_EVQ_BYTES) {
-		s->stats.events_dropped++;
-		mtx_unlock(&s->lock);
-		free(ev->bytes, M_DRAWFS);
-		free(ev, M_DRAWFS);
-		return (ENOSPC);
-	}
+    /*
+     * Step 19: event queue backpressure.
+     */
+    if (s->evq_bytes + len > DRAWFS_MAX_EVQ_BYTES) {
+        s->stats.events_dropped++;
+        mtx_unlock(&s->lock);
+        free(ev->bytes, M_DRAWFS);
+        free(ev, M_DRAWFS);
+        return (ENOSPC);
+    }
 
-	if (s->closing) {
-		s->stats.events_dropped++;
-		mtx_unlock(&s->lock);
-		free(ev->bytes, M_DRAWFS);
-		free(ev, M_DRAWFS);
-		return (ENXIO);
-	}
+    if (s->closing) {
+        s->stats.events_dropped++;
+        mtx_unlock(&s->lock);
+        free(ev->bytes, M_DRAWFS);
+        free(ev, M_DRAWFS);
+        return (ENXIO);
+    }
 
-	TAILQ_INSERT_TAIL(&s->evq, ev, link);
-	s->evq_bytes += len;
+    TAILQ_INSERT_TAIL(&s->evq, ev, link);
+    s->evq_bytes += len;
 
-	s->stats.events_enqueued++;
+    s->stats.events_enqueued++;
     s->stats.bytes_out += (uint64_t)len;
 
     cv_signal(&s->cv);
@@ -1114,6 +845,7 @@ drawfs_process_frame(struct drawfs_session *s, const uint8_t *buf, size_t n)
         case DRAWFS_REQ_SURFACE_DESTROY:
             (void)drawfs_reply_surface_destroy(s, mh.msg_id, payload, payload_len);
             break;
+
         case DRAWFS_REQ_SURFACE_PRESENT: {
             int error;
 
@@ -1137,7 +869,6 @@ drawfs_process_frame(struct drawfs_session *s, const uint8_t *buf, size_t n)
 
 /*
  * Helper to build and enqueue a reply frame.
- * Handles frame header, message header, payload copying, alignment, and enqueue.
  */
 static int
 drawfs_send_reply(struct drawfs_session *s, uint16_t msg_type,
@@ -1213,14 +944,6 @@ drawfs_reply_hello(struct drawfs_session *s, uint32_t msg_id)
 static int
 drawfs_reply_display_list(struct drawfs_session *s, uint32_t msg_id)
 {
-    /*
-     * Step 8: Return a real DISPLAY_LIST payload.
-     *
-     * For now we report a single stub display:
-     *   id=1, 1920x1080 @ 60 Hz.
-     *
-     * This will later be backed by DRM/KMS enumeration.
-     */
     struct {
         uint32_t count;
         struct drawfs_display_desc desc;
@@ -1236,7 +959,6 @@ drawfs_reply_display_list(struct drawfs_session *s, uint32_t msg_id)
     return drawfs_send_reply(s, DRAWFS_RPL_DISPLAY_LIST, msg_id,
         &payload, sizeof(payload));
 }
-
 
 static int
 drawfs_modevent(module_t mod, int type, void *data)
