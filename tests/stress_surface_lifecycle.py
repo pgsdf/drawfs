@@ -182,9 +182,9 @@ def stress_mixed_workload(iterations: int, verbose: bool = False):
                     errors += 1
 
             elif r < 0.9 and surfaces:
-                # Present
+                # Present (skip_events=True to handle pending events)
                 sid = random.choice(surfaces)
-                status, _, _ = s.surface_present(sid, i)
+                status, _, _ = s.surface_present(sid, i, skip_events=True)
                 if status == 0:
                     ops['present'] += 1
                 else:
