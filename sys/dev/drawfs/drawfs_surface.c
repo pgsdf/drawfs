@@ -3,6 +3,10 @@
  *
  * This module handles creation, destruction, lookup, and mmap support
  * for drawing surfaces within a session.
+ *
+ * Locking: All functions acquire s->lock internally unless noted otherwise.
+ * VM object operations (allocate/deallocate) are done outside the lock to
+ * avoid sleeping with mutex held.
  */
 
 #include <sys/param.h>
@@ -47,6 +51,7 @@ drawfs_surface_lookup(struct drawfs_session *s, uint32_t surface_id)
 
 /*
  * Create a new surface.
+ * Acquires and releases s->lock internally.
  * Returns 0 on success, or an errno on failure.
  */
 int
@@ -115,6 +120,7 @@ drawfs_surface_create(struct drawfs_session *s,
 
 /*
  * Destroy a surface by ID.
+ * Acquires s->lock to detach surface; releases before deallocating VM object.
  * Returns 0 on success, EINVAL if surface_id is 0, ENOENT if not found.
  */
 int
@@ -163,6 +169,7 @@ drawfs_surface_destroy(struct drawfs_session *s, uint32_t surface_id)
 
 /*
  * Select a surface for mmap on this session.
+ * Acquires and releases s->lock internally.
  */
 int
 drawfs_surface_select_for_mmap(struct drawfs_session *s,
@@ -197,6 +204,7 @@ drawfs_surface_select_for_mmap(struct drawfs_session *s,
 
 /*
  * Get or allocate the VM object for the currently selected mmap surface.
+ * Acquires s->lock; may call vm_pager_allocate with lock held (blocking alloc).
  * Returns vm_object with reference added on success, NULL on failure.
  */
 vm_object_t
@@ -250,7 +258,8 @@ drawfs_surface_get_vmobj(struct drawfs_session *s, vm_size_t size,
 
 /*
  * Free all surfaces in a session.
- * Called during session teardown.
+ * Called during session teardown after s->closing is set.
+ * Acquires s->lock briefly per surface; deallocates VM objects outside lock.
  */
 void
 drawfs_surfaces_free_all(struct drawfs_session *s)

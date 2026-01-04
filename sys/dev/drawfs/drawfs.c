@@ -28,6 +28,25 @@
 
 MALLOC_DEFINE(M_DRAWFS, "drawfs", "drawfs session and object memory");
 
+/*
+ * Locking model:
+ *
+ * Each session has a mutex (s->lock) that protects:
+ *   - Event queue (evq, evq_bytes)
+ *   - Session state (closing flag, active_display_*, map_surface_id)
+ *   - Input buffer (inbuf, in_len, in_cap)
+ *   - Statistics counters (stats.*)
+ *   - Condition variable and select info (cv, sel)
+ *
+ * Surface list (s->surfaces) is also protected by s->lock. See drawfs_surface.c.
+ *
+ * Locking rules:
+ *   - Never hold s->lock while calling malloc() with M_WAITOK
+ *   - Never hold s->lock when calling vm_pager_allocate or vm_object_deallocate
+ *   - Callbacks (d_open, d_close, d_read, d_write, d_poll) acquire lock as needed
+ *   - Helper functions document whether they acquire lock or expect caller to hold it
+ */
+
 static int drawfs_open(struct cdev *dev, int oflags, int devtype, struct thread *td);
 static int drawfs_close(struct cdev *dev, int fflag, int devtype, struct thread *td);
 static int drawfs_read(struct cdev *dev, struct uio *uio, int ioflag);
@@ -39,7 +58,6 @@ static int drawfs_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag, s
 static void drawfs_session_free(struct drawfs_session *s);
 static int drawfs_enqueue_event(struct drawfs_session *s, const void *buf, size_t len);
 
-static int drawfs_reply_ok(struct drawfs_session *s, uint32_t msg_id);
 static int drawfs_reply_error(struct drawfs_session *s, uint32_t msg_id, uint32_t err_code, uint32_t err_offset);
 static int drawfs_reply_hello(struct drawfs_session *s, uint32_t msg_id);
 static int drawfs_reply_display_list(struct drawfs_session *s, uint32_t msg_id);
@@ -515,6 +533,11 @@ drawfs_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag, struct threa
     return (0);
 }
 
+/*
+ * Free all session resources.
+ * Acquires s->lock to set closing flag and drain queues; releases before
+ * destroying surfaces (which may sleep on VM object deallocation).
+ */
 static void
 drawfs_session_free(struct drawfs_session *s)
 {
@@ -554,6 +577,10 @@ drawfs_session_free(struct drawfs_session *s)
     free(s, M_DRAWFS);
 }
 
+/*
+ * Enqueue an event (frame) to the session's read queue.
+ * Acquires and releases s->lock internally.
+ */
 static int
 drawfs_enqueue_event(struct drawfs_session *s, const void *buf, size_t len)
 {
@@ -605,6 +632,10 @@ drawfs_enqueue_event(struct drawfs_session *s, const void *buf, size_t len)
     return (0);
 }
 
+/*
+ * Append incoming bytes to session's input buffer and try to process.
+ * Acquires and releases s->lock internally.
+ */
 static int
 drawfs_ingest_bytes(struct drawfs_session *s, const uint8_t *buf, size_t n)
 {
@@ -651,6 +682,10 @@ drawfs_ingest_bytes(struct drawfs_session *s, const uint8_t *buf, size_t n)
     return drawfs_try_process_inbuf(s);
 }
 
+/*
+ * Try to process complete frames from the input buffer.
+ * Acquires s->lock for each iteration; releases before calling process_frame.
+ */
 static int
 drawfs_try_process_inbuf(struct drawfs_session *s)
 {
@@ -821,7 +856,8 @@ drawfs_process_frame(struct drawfs_session *s, const uint8_t *buf, size_t n)
 }
 
 /*
- * Helper to build and enqueue a reply frame.
+ * Build and enqueue a reply frame.
+ * Does not hold s->lock; calls drawfs_enqueue_event which acquires it.
  */
 static int
 drawfs_send_reply(struct drawfs_session *s, uint16_t msg_type,
@@ -837,12 +873,6 @@ drawfs_send_reply(struct drawfs_session *s, uint16_t msg_type,
     err = drawfs_enqueue_event(s, frame, frame_len);
     free(frame, M_DRAWFS);
     return (err);
-}
-
-static int
-drawfs_reply_ok(struct drawfs_session *s, uint32_t msg_id)
-{
-    return drawfs_send_reply(s, DRAWFS_RPL_OK, msg_id, NULL, 0);
 }
 
 static int
