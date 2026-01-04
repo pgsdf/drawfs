@@ -50,9 +50,12 @@ def main():
         st1 = get_stats(fd)
         print_stats("after traffic", st1)
 
-        expected_out = 44 + 36
+        # RPL_HELLO: 16 (frame hdr) + 12 (msg hdr) + 16 (payload) = 44
+        # RPL_DISPLAY_LIST: 16 (frame hdr) + 12 (msg hdr) + 28 (payload) = 56
+        expected_out = 44 + 56
         if st1['bytes_out'] != expected_out:
-            print(f"NOTE: bytes_out expected {expected_out}, got {st1['bytes_out']}")
+            raise SystemExit(f"FAIL: bytes_out expected {expected_out}, got {st1['bytes_out']}")
+        print("OK: step7B")
     finally:
         os.close(fd)
 
