@@ -18,6 +18,14 @@
 MALLOC_DECLARE(M_DRAWFS);
 
 /*
+ * Tunable resource limits (defined in drawfs.c, exposed via sysctl).
+ */
+extern int drawfs_max_evq_bytes;
+extern int drawfs_max_surfaces;
+extern long drawfs_max_surface_bytes;
+extern long drawfs_max_session_surface_bytes;
+
+/*
  * Event queue entry for outbound frames (replies and async events).
  */
 struct drawfs_event {

@@ -110,6 +110,8 @@ The mapping is session scoped. The selected surface id is stored in `map_surface
 
 The module exposes tunable parameters under `hw.drawfs`:
 
+### Security
+
 | Sysctl | Default | Description |
 |--------|---------|-------------|
 | `hw.drawfs.dev_uid` | 0 | Device node owner UID (at load) |
@@ -117,8 +119,17 @@ The module exposes tunable parameters under `hw.drawfs`:
 | `hw.drawfs.dev_mode` | 0600 | Device node permissions (at load) |
 | `hw.drawfs.mmap_enabled` | 1 | Allow mmap (runtime toggle) |
 
+### Resource Limits
+
+| Sysctl | Default | Description |
+|--------|---------|-------------|
+| `hw.drawfs.max_evq_bytes` | 8192 | Max event queue bytes per session |
+| `hw.drawfs.max_surfaces` | 64 | Max surfaces per session |
+| `hw.drawfs.max_surface_bytes` | 64MB | Max bytes per surface |
+| `hw.drawfs.max_session_surface_bytes` | 256MB | Max cumulative surface bytes per session |
+
 Device permission sysctls are applied at module load time via `loader.conf`.
-The mmap gate can be toggled at runtime.
+All other sysctls can be changed at runtime and affect new operations.
 
 See `docs/SECURITY.md` for configuration examples.
 

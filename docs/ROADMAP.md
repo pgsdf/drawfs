@@ -41,7 +41,7 @@
    - [x] mmap gated by sysctl (hw.drawfs.mmap_enabled)
 
 3. Tuning
-   - Make event queue and surface limits tunable via sysctl (per-session and global)
+   - [x] Event queue and surface limits tunable via sysctl (hw.drawfs.max_*)
 
 ## Phase 2: Real Display Bring-up
 - DRM/KMS integration

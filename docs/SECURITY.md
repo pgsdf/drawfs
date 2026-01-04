@@ -10,11 +10,12 @@
 The module enforces conservative defaults to reduce trivial DoS by unbounded
 surface creation:
 
-- Maximum surfaces per session
-- Maximum bytes per surface
-- Maximum cumulative surface bytes per session
+- Maximum surfaces per session (`hw.drawfs.max_surfaces`, default: 64)
+- Maximum bytes per surface (`hw.drawfs.max_surface_bytes`, default: 64MB)
+- Maximum cumulative surface bytes per session (`hw.drawfs.max_session_surface_bytes`, default: 256MB)
+- Maximum event queue bytes per session (`hw.drawfs.max_evq_bytes`, default: 8KB)
 
-These values can be made configurable via sysctl later.
+All limits are tunable at runtime via sysctl. Changes affect new operations only.
 
 ## Security Principles
 - No raw framebuffer access

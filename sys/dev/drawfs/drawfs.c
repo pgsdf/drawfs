@@ -59,6 +59,32 @@ SYSCTL_INT(_hw_drawfs, OID_AUTO, mmap_enabled, CTLFLAG_RW,
     "Allow mmap of surface memory (1=enabled, 0=disabled)");
 
 /*
+ * Tunable resource limits.
+ *
+ * These can be adjusted at runtime via sysctl. Changes take effect for new
+ * operations; existing sessions/surfaces are not retroactively affected.
+ */
+int drawfs_max_evq_bytes = DRAWFS_MAX_EVQ_BYTES;
+SYSCTL_INT(_hw_drawfs, OID_AUTO, max_evq_bytes, CTLFLAG_RW,
+    &drawfs_max_evq_bytes, 0,
+    "Maximum event queue bytes per session (default: 8192)");
+
+int drawfs_max_surfaces = DRAWFS_MAX_SURFACES;
+SYSCTL_INT(_hw_drawfs, OID_AUTO, max_surfaces, CTLFLAG_RW,
+    &drawfs_max_surfaces, 0,
+    "Maximum surfaces per session (default: 64)");
+
+long drawfs_max_surface_bytes = DRAWFS_MAX_SURFACE_BYTES;
+SYSCTL_LONG(_hw_drawfs, OID_AUTO, max_surface_bytes, CTLFLAG_RW,
+    &drawfs_max_surface_bytes, 0,
+    "Maximum bytes per surface (default: 64MB)");
+
+long drawfs_max_session_surface_bytes = DRAWFS_MAX_SESSION_SURFACE_BYTES;
+SYSCTL_LONG(_hw_drawfs, OID_AUTO, max_session_surface_bytes, CTLFLAG_RW,
+    &drawfs_max_session_surface_bytes, 0,
+    "Maximum cumulative surface bytes per session (default: 256MB)");
+
+/*
  * Locking model:
  *
  * Each session has a mutex (s->lock) that protects:
@@ -636,8 +662,9 @@ drawfs_enqueue_event(struct drawfs_session *s, const void *buf, size_t len)
 
     /*
      * Step 19: event queue backpressure.
+     * Limit is tunable via hw.drawfs.max_evq_bytes sysctl.
      */
-    if (s->evq_bytes + len > DRAWFS_MAX_EVQ_BYTES) {
+    if (s->evq_bytes + len > (size_t)drawfs_max_evq_bytes) {
         s->stats.events_dropped++;
         mtx_unlock(&s->lock);
         free(ev->bytes, M_DRAWFS);
