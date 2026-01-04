@@ -211,17 +211,22 @@ def surface_create(
     fmt: int = FMT_XRGB8888,
     flags: int = 0,
     frame_id: int = 4,
-    msg_id: int = 4
+    msg_id: int = 4,
+    skip_events: bool = False
 ) -> Tuple[int, int, int, int]:
     """
     Send SURFACE_CREATE and read reply.
     Returns (status, surface_id, stride, total_bytes).
+    If skip_events=True, uses drain_until to skip any pending events.
     """
     payload = struct.pack("<IIII", width, height, fmt, flags)
     send(fd, make_frame(frame_id, [make_msg(REQ_SURFACE_CREATE, msg_id, payload)]))
-    mt, mid, reply_payload = read_msg(fd)
-    if mt != RPL_SURFACE_CREATE:
-        raise RuntimeError(f"Expected SURFACE_CREATE reply, got 0x{mt:04x}")
+    if skip_events:
+        _, reply_payload = drain_until(fd, RPL_SURFACE_CREATE)
+    else:
+        mt, mid, reply_payload = read_msg(fd)
+        if mt != RPL_SURFACE_CREATE:
+            raise RuntimeError(f"Expected SURFACE_CREATE reply, got 0x{mt:04x}")
     status, sid, stride, total = struct.unpack_from("<iIII", reply_payload, 0)
     return status, sid, stride, total
 
@@ -230,17 +235,22 @@ def surface_destroy(
     fd: int,
     surface_id: int,
     frame_id: int = 5,
-    msg_id: int = 5
+    msg_id: int = 5,
+    skip_events: bool = False
 ) -> int:
     """
     Send SURFACE_DESTROY and read reply.
     Returns status.
+    If skip_events=True, uses drain_until to skip any pending events.
     """
     payload = struct.pack("<I", surface_id)
     send(fd, make_frame(frame_id, [make_msg(REQ_SURFACE_DESTROY, msg_id, payload)]))
-    mt, mid, reply_payload = read_msg(fd)
-    if mt != RPL_SURFACE_DESTROY:
-        raise RuntimeError(f"Expected SURFACE_DESTROY reply, got 0x{mt:04x}")
+    if skip_events:
+        _, reply_payload = drain_until(fd, RPL_SURFACE_DESTROY)
+    else:
+        mt, mid, reply_payload = read_msg(fd)
+        if mt != RPL_SURFACE_DESTROY:
+            raise RuntimeError(f"Expected SURFACE_DESTROY reply, got 0x{mt:04x}")
     status, = struct.unpack_from("<i", reply_payload, 0)
     return status
 
@@ -399,13 +409,13 @@ class DrawSession:
         fid, mid = self._next_ids()
         return display_open(self.fd, display_id, fid, mid)
 
-    def surface_create(self, width: int, height: int, fmt: int = FMT_XRGB8888) -> Tuple[int, int, int, int]:
+    def surface_create(self, width: int, height: int, fmt: int = FMT_XRGB8888, skip_events: bool = False) -> Tuple[int, int, int, int]:
         fid, mid = self._next_ids()
-        return surface_create(self.fd, width, height, fmt, 0, fid, mid)
+        return surface_create(self.fd, width, height, fmt, 0, fid, mid, skip_events)
 
-    def surface_destroy(self, surface_id: int) -> int:
+    def surface_destroy(self, surface_id: int, skip_events: bool = False) -> int:
         fid, mid = self._next_ids()
-        return surface_destroy(self.fd, surface_id, fid, mid)
+        return surface_destroy(self.fd, surface_id, fid, mid, skip_events)
 
     def surface_present(self, surface_id: int, cookie: int = 0) -> Tuple[int, int, int]:
         fid, mid = self._next_ids()
