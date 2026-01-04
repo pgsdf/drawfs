@@ -1,5 +1,5 @@
 .PATH: ${SRCTOP}/sys/dev/drawfs
 KMOD=   drawfs
-SRCS=   drawfs.c
+SRCS=   drawfs.c drawfs_surface.c
 SRCS+=  opt_global.h
 .include <bsd.kmod.mk>
