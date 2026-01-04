@@ -1,5 +1,5 @@
-# drawfs kernel module, step 4: DISPLAY_LIST stub
+# drawfs kernel module
 KMOD=   drawfs
-SRCS=   drawfs.c
+SRCS=   drawfs.c drawfs_surface.c
 SRCS+=  opt_global.h
 .include <bsd.kmod.mk>
