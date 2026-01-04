@@ -118,6 +118,7 @@ static int drawfs_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag, s
 
 static void drawfs_session_free(struct drawfs_session *s);
 static int drawfs_enqueue_event(struct drawfs_session *s, const void *buf, size_t len);
+static int drawfs_try_coalesce_presented(struct drawfs_session *s, uint32_t surface_id, uint64_t new_cookie);
 
 static int drawfs_reply_error(struct drawfs_session *s, uint32_t msg_id, uint32_t err_code, uint32_t err_offset);
 static int drawfs_reply_hello(struct drawfs_session *s, uint32_t msg_id);
