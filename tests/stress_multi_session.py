@@ -63,19 +63,20 @@ class SessionWorker:
                 r = random.random()
 
                 if r < 0.4 and len(surfaces) < 10:
-                    # Create
+                    # Create (skip_events=True to handle pending events)
                     status, sid, _, _ = s.surface_create(
                         random.randint(32, 128),
-                        random.randint(32, 128)
+                        random.randint(32, 128),
+                        skip_events=True
                     )
                     if status == 0:
                         surfaces.append(sid)
                         self.results['created'] += 1
 
                 elif r < 0.6 and surfaces:
-                    # Destroy
+                    # Destroy (skip_events=True to handle pending events)
                     sid = surfaces.pop(random.randint(0, len(surfaces) - 1))
-                    if s.surface_destroy(sid) == 0:
+                    if s.surface_destroy(sid, skip_events=True) == 0:
                         self.results['destroyed'] += 1
 
                 elif surfaces:
@@ -92,7 +93,7 @@ class SessionWorker:
             # Cleanup
             s.drain_all(max_msgs=500, timeout_s=1.0)
             for sid in surfaces:
-                s.surface_destroy(sid)
+                s.surface_destroy(sid, skip_events=True)
 
 
 def stress_parallel_sessions(num_workers: int, iterations: int, verbose: bool = False):
@@ -141,11 +142,11 @@ def stress_session_churn(iterations: int, verbose: bool = False):
                 s.hello()
                 s.display_open()
                 # Create a surface and present once
-                status, sid, _, _ = s.surface_create(64, 64)
+                status, sid, _, _ = s.surface_create(64, 64, skip_events=True)
                 if status == 0:
                     s.surface_present(sid, i)
                     s.drain_all(max_msgs=5, timeout_s=0.05)
-                    s.surface_destroy(sid)
+                    s.surface_destroy(sid, skip_events=True)
         except Exception as e:
             errors += 1
             if verbose:
@@ -188,7 +189,7 @@ def stress_interleaved_sessions(num_sessions: int, iterations: int, verbose: boo
             r = random.random()
 
             if r < 0.4 and len(surfs) < 5:
-                status, sid, _, _ = s.surface_create(64, 64)
+                status, sid, _, _ = s.surface_create(64, 64, skip_events=True)
                 if status == 0:
                     surfs.append(sid)
                     ops['create'] += 1
@@ -197,7 +198,7 @@ def stress_interleaved_sessions(num_sessions: int, iterations: int, verbose: boo
 
             elif r < 0.6 and surfs:
                 sid = surfs.pop(random.randint(0, len(surfs) - 1))
-                if s.surface_destroy(sid) == 0:
+                if s.surface_destroy(sid, skip_events=True) == 0:
                     ops['destroy'] += 1
                 else:
                     errors += 1
@@ -227,7 +228,7 @@ def stress_interleaved_sessions(num_sessions: int, iterations: int, verbose: boo
             try:
                 s.drain_all(max_msgs=100, timeout_s=0.5)
                 for sid in surfaces[i]:
-                    s.surface_destroy(sid)
+                    s.surface_destroy(sid, skip_events=True)
                 s.__exit__(None, None, None)
             except:
                 pass

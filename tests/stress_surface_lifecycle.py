@@ -160,10 +160,11 @@ def stress_mixed_workload(iterations: int, verbose: bool = False):
             r = random.random()
 
             if r < 0.3:
-                # Create
+                # Create (skip_events=True to handle pending events)
                 status, sid, stride, total = s.surface_create(
                     random.randint(32, 256),
-                    random.randint(32, 256)
+                    random.randint(32, 256),
+                    skip_events=True
                 )
                 if status == 0:
                     surfaces.append(sid)
@@ -172,9 +173,9 @@ def stress_mixed_workload(iterations: int, verbose: bool = False):
                     errors += 1
 
             elif r < 0.5 and surfaces:
-                # Destroy
+                # Destroy (skip_events=True to handle pending events)
                 sid = surfaces.pop(random.randint(0, len(surfaces) - 1))
-                status = s.surface_destroy(sid)
+                status = s.surface_destroy(sid, skip_events=True)
                 if status == 0:
                     ops['destroy'] += 1
                 else:
@@ -212,7 +213,7 @@ def stress_mixed_workload(iterations: int, verbose: bool = False):
 
         # Cleanup remaining surfaces
         for sid in surfaces:
-            s.surface_destroy(sid)
+            s.surface_destroy(sid, skip_events=True)
 
 
 def main():
