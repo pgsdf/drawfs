@@ -182,6 +182,16 @@ sudo python3 tests/test_memory_lifecycle.py -n 100
 sudo python3 tests/test_memory_lifecycle.py -t churn -n 500
 ```
 
+### Observability Stats
+`tests/test_observability.py` - Validates stats ioctl observability fields.
+
+Tests that `evq_bytes`, `surfaces_count`, and `surfaces_bytes` correctly track
+current resource usage in real-time.
+
+```sh
+sudo python3 tests/test_observability.py
+```
+
 ## Running Tests
 
 Individual test:
