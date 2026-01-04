@@ -19,7 +19,7 @@ drawfs is designed around semantics.
 
 * Explicit resource creation
 * Explicit mapping of buffers
-* Explicit presentation (planned)
+* Explicit presentation
 * Explicit event delivery (planned)
 
 This supports higher level systems without forcing a specific desktop stack.
@@ -33,9 +33,10 @@ Implemented.
 * Reply event queue with blocking reads
 * poll readiness semantics
 * mmap backing for surfaces (Step 11)
+* Surface presentation (Step 12)
 
 Planned next.
-* Present and flip
+* Display flip
 * Damage tracking
 * Input events
 * Backend binding to vt or KMS

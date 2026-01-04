@@ -123,6 +123,49 @@ Semantics.
 * Invalid id returns ENOENT.
 * surface_id 0 returns EINVAL.
 
+### SURFACE_PRESENT 0x0022
+
+Payload.
+
+* surface_id: u32
+* flags: u32 (reserved, must be zero)
+* cookie: u64 (client-chosen tracking value)
+
+Reply payload.
+
+* status: i32
+* surface_id: u32
+* cookie: u64
+
+Semantics.
+
+* Notifies the kernel that the surface is ready for presentation.
+* Requires a valid, mapped surface.
+* Invalid surface_id returns ENOENT.
+* The reply confirms the request was accepted.
+* An async SURFACE_PRESENTED event is enqueued after the reply.
+
+## Event messages
+
+Event message types use the 0x9xxx range.
+
+Events are asynchronous notifications delivered on the read stream alongside replies.
+Clients must handle interleaved replies and events.
+
+### SURFACE_PRESENTED 0x9002
+
+Payload.
+
+* surface_id: u32
+* reserved: u32 (zero)
+* cookie: u64
+
+Semantics.
+
+* Delivered after a SURFACE_PRESENT request is processed.
+* The cookie matches the value from the corresponding request.
+* Multiple SURFACE_PRESENTED events for the same surface may be coalesced under backpressure.
+
 ## Step 11 mapping semantics
 
 Mapping uses ioctl and mmap, not protocol messages.
