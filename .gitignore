@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Editor
+*.swp
+*.swo
+*~
+
+# FreeBSD kernel build artifacts
+*.o
+*.ko
+*.ko.debug
+.depend
+export_syms
