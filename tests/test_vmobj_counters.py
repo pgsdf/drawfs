@@ -6,6 +6,7 @@ These tests verify that hw.drawfs.vmobj_allocs and hw.drawfs.vmobj_deallocs
 correctly track vm_object allocations/deallocations for leak detection.
 """
 
+import mmap
 import subprocess
 import sys
 import os
@@ -37,18 +38,23 @@ def test_vmobj_counters_basic():
         s.hello()
         s.display_open()
 
-        # Create surface and mmap it (triggers vm_object allocation)
+        # Create surface and select for mmap
         status, sid, stride, total = s.surface_create(64, 64)
         assert status == 0, f"surface_create failed: {status}"
 
-        # mmap triggers vm_pager_allocate
-        status, _, _, _ = s.map_surface(sid)
+        status, _, _, total_bytes = s.map_surface(sid)
         assert status == 0, f"map_surface failed: {status}"
 
-        allocs_after_mmap, deallocs_after_mmap = get_vmobj_counters()
-        print(f"  after mmap: allocs={allocs_after_mmap}, deallocs={deallocs_after_mmap}")
-        assert allocs_after_mmap == allocs_before + 1, \
-            f"Expected allocs to increase by 1, got {allocs_after_mmap - allocs_before}"
+        # Actual mmap() syscall triggers vm_pager_allocate
+        mm = mmap.mmap(s.fd, total_bytes, mmap.MAP_SHARED,
+                       mmap.PROT_READ | mmap.PROT_WRITE, offset=0)
+        try:
+            allocs_after_mmap, deallocs_after_mmap = get_vmobj_counters()
+            print(f"  after mmap: allocs={allocs_after_mmap}, deallocs={deallocs_after_mmap}")
+            assert allocs_after_mmap == allocs_before + 1, \
+                f"Expected allocs to increase by 1, got {allocs_after_mmap - allocs_before}"
+        finally:
+            mm.close()
 
         # Destroy surface (triggers vm_object_deallocate)
         status = s.surface_destroy(sid)
@@ -75,16 +81,24 @@ def test_vmobj_counters_session_close():
         s.hello()
         s.display_open()
 
+        mmaps = []
         # Create and mmap 3 surfaces
         for i in range(3):
             status, sid, _, _ = s.surface_create(64, 64)
             assert status == 0
-            status, _, _, _ = s.map_surface(sid)
+            status, _, _, total = s.map_surface(sid)
             assert status == 0
+            mm = mmap.mmap(s.fd, total, mmap.MAP_SHARED,
+                           mmap.PROT_READ | mmap.PROT_WRITE, offset=0)
+            mmaps.append(mm)
 
         allocs_during, deallocs_during = get_vmobj_counters()
         print(f"  during session: allocs={allocs_during}, deallocs={deallocs_during}")
         assert allocs_during == allocs_before + 3
+
+        # Close all mmaps before session closes
+        for mm in mmaps:
+            mm.close()
 
     # Session closed - all surfaces should be cleaned up
     allocs_after, deallocs_after = get_vmobj_counters()
@@ -141,16 +155,24 @@ def test_vmobj_counters_multiple_surfaces():
         s.display_open()
 
         surfaces = []
+        mmaps = []
         for i in range(5):
             status, sid, _, _ = s.surface_create(64, 64)
             assert status == 0
-            status, _, _, _ = s.map_surface(sid)
+            status, _, _, total = s.map_surface(sid)
             assert status == 0
+            mm = mmap.mmap(s.fd, total, mmap.MAP_SHARED,
+                           mmap.PROT_READ | mmap.PROT_WRITE, offset=0)
             surfaces.append(sid)
+            mmaps.append(mm)
 
         allocs_after_mmap, _ = get_vmobj_counters()
         print(f"  after 5 mmaps: allocs={allocs_after_mmap}")
         assert allocs_after_mmap == allocs_before + 5
+
+        # Close mmaps for surfaces we're about to destroy
+        for mm in mmaps[:3]:
+            mm.close()
 
         # Destroy 3 surfaces
         for sid in surfaces[:3]:
@@ -159,6 +181,10 @@ def test_vmobj_counters_multiple_surfaces():
         _, deallocs_after_destroy = get_vmobj_counters()
         print(f"  after destroying 3: deallocs={deallocs_after_destroy}")
         assert deallocs_after_destroy == deallocs_before + 3
+
+        # Close remaining mmaps
+        for mm in mmaps[3:]:
+            mm.close()
 
     # Session close cleans up remaining 2
     allocs_after, deallocs_after = get_vmobj_counters()
