@@ -37,8 +37,8 @@
    - [x] Added locking rule comments to drawfs.c and drawfs_surface.c
 
 2. Security posture
-   - Consider making the device node permissions and group ownership configurable
-   - Consider a privileged ioctl or sysctl gate for enabling mmap
+   - [x] Device node permissions configurable via sysctl (hw.drawfs.dev_uid/gid/mode)
+   - [x] mmap gated by sysctl (hw.drawfs.mmap_enabled)
 
 3. Tuning
    - Make event queue and surface limits tunable via sysctl (per-session and global)

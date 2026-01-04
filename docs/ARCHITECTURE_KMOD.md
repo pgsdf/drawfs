@@ -106,6 +106,22 @@ The mapping flow is.
 
 The mapping is session scoped. The selected surface id is stored in `map_surface_id` on that fd.
 
+## Sysctl Configuration
+
+The module exposes tunable parameters under `hw.drawfs`:
+
+| Sysctl | Default | Description |
+|--------|---------|-------------|
+| `hw.drawfs.dev_uid` | 0 | Device node owner UID (at load) |
+| `hw.drawfs.dev_gid` | 0 | Device node group GID (at load) |
+| `hw.drawfs.dev_mode` | 0600 | Device node permissions (at load) |
+| `hw.drawfs.mmap_enabled` | 1 | Allow mmap (runtime toggle) |
+
+Device permission sysctls are applied at module load time via `loader.conf`.
+The mmap gate can be toggled at runtime.
+
+See `docs/SECURITY.md` for configuration examples.
+
 ## Error semantics
 
 drawfs replies report `status` as a FreeBSD errno value.
