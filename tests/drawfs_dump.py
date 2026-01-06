@@ -50,14 +50,23 @@ MSG_TYPES = {
     0x9002: "EVT_SURFACE_PRESENTED",
 }
 
-# Error codes
+# Error codes (from drawfs_proto.h enum drawfs_err_code)
 ERROR_CODES = {
     0: "OK",
     1: "INVALID_FRAME",
     2: "INVALID_MSG",
-    3: "UNSUPPORTED_CAP",
-    4: "INVALID_ARG",
-    5: "OVERFLOW",
+    3: "UNSUPPORTED_VERSION",
+    4: "UNSUPPORTED_CAP",
+    5: "PERMISSION",
+    6: "NOT_FOUND",
+    7: "BUSY",
+    8: "NO_MEMORY",
+    9: "INVALID_HANDLE",
+    10: "INVALID_STATE",
+    11: "INVALID_ARG",
+    12: "OVERFLOW",
+    13: "IO",
+    14: "INTERNAL",
 }
 
 # Pixel formats
@@ -108,11 +117,12 @@ def decode_payload(msg_type: int, payload: bytes) -> List[str]:
                 lines.append(f"max_reply_bytes: {max_reply}")
 
         elif msg_type == 0x8001:  # RPL_HELLO
-            if len(payload) >= 12:
-                major, minor, flags, caps_bytes = struct.unpack_from("<HHII", payload, 0)
+            if len(payload) >= 16:
+                status, major, minor, flags, max_reply_bytes = struct.unpack_from("<iHHII", payload, 0)
+                lines.append(f"status: {status} ({os.strerror(status) if status else 'OK'})")
                 lines.append(f"server_version: {major}.{minor}")
                 lines.append(f"flags: 0x{flags:08x}")
-                lines.append(f"caps_bytes: {caps_bytes}")
+                lines.append(f"max_reply_bytes: {max_reply_bytes}")
 
         elif msg_type == 0x0011:  # REQ_DISPLAY_OPEN
             if len(payload) >= 4:
@@ -120,10 +130,11 @@ def decode_payload(msg_type: int, payload: bytes) -> List[str]:
                 lines.append(f"display_id: {display_id}")
 
         elif msg_type == 0x8010:  # RPL_DISPLAY_LIST
-            if len(payload) >= 4:
-                count, = struct.unpack_from("<I", payload, 0)
+            if len(payload) >= 8:
+                status, count = struct.unpack_from("<iI", payload, 0)
+                lines.append(f"status: {status} ({os.strerror(status) if status else 'OK'})")
                 lines.append(f"display_count: {count}")
-                off = 4
+                off = 8
                 for i in range(count):
                     if off + 20 <= len(payload):
                         did, w, h, refresh, flags = struct.unpack_from("<IIIII", payload, off)

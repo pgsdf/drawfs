@@ -1041,10 +1041,11 @@ drawfs_reply_hello(struct drawfs_session *s, uint32_t msg_id)
 {
     struct drawfs_rpl_hello hp;
 
+    hp.status = 0;
     hp.server_major = 1;
     hp.server_minor = 0;
     hp.server_flags = 0;
-    hp.caps_bytes = 0;
+    hp.max_reply_bytes = 0;
 
     return drawfs_send_reply(s, DRAWFS_RPL_HELLO, msg_id, &hp, sizeof(hp));
 }
@@ -1053,10 +1054,12 @@ static int
 drawfs_reply_display_list(struct drawfs_session *s, uint32_t msg_id)
 {
     struct {
+        int32_t  status;
         uint32_t count;
         struct drawfs_display_desc desc;
     } payload;
 
+    payload.status = 0;
     payload.count = 1;
     payload.desc.display_id = 1;
     payload.desc.width_px = 1920;

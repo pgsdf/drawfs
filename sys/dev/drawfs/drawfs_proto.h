@@ -69,13 +69,15 @@ struct drawfs_req_hello {
 } __attribute__((packed));
 
 struct drawfs_rpl_hello {
+    int32_t  status;
     uint16_t server_major;
     uint16_t server_minor;
     uint32_t server_flags;
-    uint32_t caps_bytes;
+    uint32_t max_reply_bytes; /* max bytes server will send in a single reply */
 } __attribute__((packed));
 
 struct drawfs_rpl_display_list {
+    int32_t  status;
     uint32_t display_count;
 } __attribute__((packed));
 
@@ -166,23 +168,17 @@ struct drawfs_surface_destroy_rep {
     uint32_t surface_id;
 };
 
-struct drawfs_surface_present_req {
-    uint32_t surface_id;
-    uint32_t flags; /* reserved for future (vsync, damage tracking, etc.) */
-};
-
-struct drawfs_surface_present_rep {
-    int32_t status;
-    uint32_t surface_id;
-    uint32_t reserved0;
-    uint32_t reserved1;
-};
-
-
-
-
 /*
  * SURFACE_PRESENT (Step 12)
+ *
+ * Request: Client submits a surface for presentation.
+ * Reply: Server acknowledges with status and echoes the cookie.
+ * Event: Server notifies when surface is actually displayed.
+ *
+ * The cookie field is an opaque 64-bit value provided by the client
+ * in the request. It is echoed back in the reply and the presented
+ * event, allowing clients to correlate presentation completion with
+ * the original request (e.g., for frame timing or double-buffering).
  */
 enum drawfs_event_type {
     DRAWFS_EVT_SURFACE_PRESENTED = 0x9002,
@@ -190,19 +186,19 @@ enum drawfs_event_type {
 
 struct drawfs_req_surface_present {
     uint32_t surface_id;
-    uint32_t flags;
-    uint64_t cookie;
+    uint32_t flags;      /* reserved for future (vsync, damage, etc.) */
+    uint64_t cookie;     /* opaque client value, echoed in reply/event */
 } __packed;
 
 struct drawfs_rpl_surface_present {
-    int32_t  status;
+    int32_t  status;     /* 0 = success, else error code */
     uint32_t surface_id;
-    uint64_t cookie;
+    uint64_t cookie;     /* echoed from request */
 } __packed;
 
 struct drawfs_evt_surface_presented {
     uint32_t surface_id;
     uint32_t reserved;
-    uint64_t cookie;
+    uint64_t cookie;     /* echoed from request */
 } __packed;
 #endif

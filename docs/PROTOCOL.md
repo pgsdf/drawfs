@@ -172,6 +172,44 @@ Mapping uses ioctl and mmap, not protocol messages.
 
 See `KERNEL_INTERFACES.md` and `ARCHITECTURE_KMOD.md` for details.
 
+## Version compatibility
+
+### Protocol versions
+
+| Component | Version | Identifier |
+|-----------|---------|------------|
+| drawfs protocol | v1.0 | `0x0100` |
+| semadraw IPC | v0.1 | major=0, minor=1 |
+| SDCS command stream | v0.1 | major=0, minor=1 |
+
+### Version negotiation
+
+During HELLO handshake:
+1. Client sends its version (client_major, client_minor)
+2. Server responds with its version (server_major, server_minor)
+3. Major version mismatch = incompatible, connection refused
+4. Minor version mismatch = backward compatible, use lower version features
+
+### Cross-component compatibility
+
+drawfs v1.0 is compatible with semadraw v0.1:
+- The semadraw drawfs backend correctly implements drawfs v1.0 protocol
+- SDCS command streams are rendered by the drawfs backend, not passed through the protocol
+- Version differences are at the semantic layer, not the wire protocol
+
+## Alignment requirements
+
+Different protocols have different alignment requirements:
+
+| Protocol | Alignment | Padding |
+|----------|-----------|---------|
+| drawfs frames/messages | 4-byte | Zero-filled |
+| SDCS command stream | 8-byte | Zero-filled |
+
+When SDCS data is embedded in drawfs surfaces (via mmap), alignment boundaries
+must be respected. The SDCS header is 64 bytes (8-byte aligned), and each
+command record is padded to 8-byte boundaries.
+
 ## Forward compatibility
 
 * New messages must be additive.

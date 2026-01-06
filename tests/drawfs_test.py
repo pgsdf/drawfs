@@ -225,6 +225,10 @@ def surface_create(
         _, reply_payload = drain_until(fd, RPL_SURFACE_CREATE)
     else:
         mt, mid, reply_payload = read_msg(fd)
+        if mt == RPL_ERROR:
+            # Parse error: err_code, err_detail, err_offset
+            err_code, _, _ = struct.unpack_from("<III", reply_payload, 0)
+            return err_code, 0, 0, 0
         if mt != RPL_SURFACE_CREATE:
             raise RuntimeError(f"Expected SURFACE_CREATE reply, got 0x{mt:04x}")
     status, sid, stride, total = struct.unpack_from("<iIII", reply_payload, 0)
@@ -249,6 +253,9 @@ def surface_destroy(
         _, reply_payload = drain_until(fd, RPL_SURFACE_DESTROY)
     else:
         mt, mid, reply_payload = read_msg(fd)
+        if mt == RPL_ERROR:
+            err_code, _, _ = struct.unpack_from("<III", reply_payload, 0)
+            return err_code
         if mt != RPL_SURFACE_DESTROY:
             raise RuntimeError(f"Expected SURFACE_DESTROY reply, got 0x{mt:04x}")
     status, = struct.unpack_from("<i", reply_payload, 0)
@@ -274,6 +281,9 @@ def surface_present(
         _, reply_payload = drain_until(fd, RPL_SURFACE_PRESENT)
     else:
         mt, mid, reply_payload = read_msg(fd)
+        if mt == RPL_ERROR:
+            err_code, _, _ = struct.unpack_from("<III", reply_payload, 0)
+            return err_code, surface_id, cookie
         if mt != RPL_SURFACE_PRESENT:
             raise RuntimeError(f"Expected SURFACE_PRESENT reply, got 0x{mt:04x}")
     status, sid, cookie_out = struct.unpack_from("<iIQ", reply_payload, 0)
